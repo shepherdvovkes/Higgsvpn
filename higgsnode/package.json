@@ -1,0 +1,48 @@
+{
+  "name": "higgsnode",
+  "version": "1.0.0",
+  "description": "HiggsNode - Node application for Higgs.net decentralized VPN network",
+  "main": "dist/index.js",
+  "bin": {
+    "higgsnode": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli/index.js start",
+    "dev": "ts-node-dev --respawn --transpile-only src/cli/index.ts start",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit"
+  },
+  "keywords": [
+    "vpn",
+    "node",
+    "wireguard",
+    "nat-traversal"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "commander": "^11.1.0",
+    "dotenv": "^16.3.1",
+    "systeminformation": "^5.27.11",
+    "uuid": "^9.0.1",
+    "winston": "^3.11.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/uuid": "^9.0.7",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0",
+    "eslint": "^8.56.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

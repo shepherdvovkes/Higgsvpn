@@ -527,8 +527,10 @@ export class RoutingEngine extends EventEmitter {
         // Цепочка уже существует, это нормально
       }
 
-      // 4. NAT правило: от WireGuard к физическому интерфейсу
-      const natRule = `iptables -t nat -A HIGGSNODE_NAT -i ${wireguardInterface} -o ${physicalInterface} -j MASQUERADE`;
+      // 4. NAT правило: MASQUERADE для всех пакетов, идущих через физический интерфейс
+      // Примечание: пакеты приходят от bosonserver через WebSocket, не через WireGuard интерфейс
+      // Поэтому используем MASQUERADE для всех исходящих пакетов через физический интерфейс
+      const natRule = `iptables -t nat -A HIGGSNODE_NAT -o ${physicalInterface} -j MASQUERADE`;
       execSync(natRule, { stdio: 'pipe' });
       this.natRules.push(natRule);
       logger.debug('NAT rule added', { rule: natRule });
@@ -536,13 +538,14 @@ export class RoutingEngine extends EventEmitter {
       // 5. Подключить цепочку к основной таблице
       execSync(`iptables -t nat -A POSTROUTING -j HIGGSNODE_NAT`, { stdio: 'pipe' });
 
-      // 6. Forwarding правила: разрешить трафик от WireGuard к физическому интерфейсу
-      const forwardOutRule = `iptables -A HIGGSNODE_FORWARD -i ${wireguardInterface} -o ${physicalInterface} -j ACCEPT`;
+      // 6. Forwarding правила: разрешить весь трафик через физический интерфейс
+      // Пакеты приходят через WebSocket и отправляются в интернет
+      const forwardOutRule = `iptables -A HIGGSNODE_FORWARD -o ${physicalInterface} -j ACCEPT`;
       execSync(forwardOutRule, { stdio: 'pipe' });
       this.natRules.push(forwardOutRule);
 
-      // 7. Forwarding правила: разрешить обратный трафик
-      const forwardInRule = `iptables -A HIGGSNODE_FORWARD -i ${physicalInterface} -o ${wireguardInterface} -m state --state RELATED,ESTABLISHED -j ACCEPT`;
+      // 7. Forwarding правила: разрешить обратный трафик (ответы из интернета)
+      const forwardInRule = `iptables -A HIGGSNODE_FORWARD -i ${physicalInterface} -m state --state RELATED,ESTABLISHED -j ACCEPT`;
       execSync(forwardInRule, { stdio: 'pipe' });
       this.natRules.push(forwardInRule);
 

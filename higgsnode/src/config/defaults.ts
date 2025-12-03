@@ -1,6 +1,6 @@
 export const defaultConfig = {
   bosonServer: {
-    url: process.env.BOSON_SERVER_URL || 'https://mail.highfunk.uk',
+    url: process.env.BOSON_SERVER_URL || 'http://mail.s0me.uk:3003',
     timeout: 30000,
     retryAttempts: 3,
     retryDelay: 1000,

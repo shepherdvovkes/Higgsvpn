@@ -461,9 +461,22 @@
                         const data = JSON.parse(event.data);
                         if (data.type === 'clients-update') {
                             fetchClients();
+                        } else if (data.type === 'nodes-update') {
+                            // Update nodes count
+                            if (data.data && typeof data.data.count !== 'undefined') {
+                                totalNodesEl.textContent = data.data.count || 0;
+                            }
+                            // Also refresh clients to ensure consistency
+                            fetchClients();
+                        } else if (data.type === 'heartbeat') {
+                            // Just acknowledge heartbeat
+                            console.debug('Heartbeat received');
+                        } else if (data.type === 'control' && data.action === 'connected') {
+                            console.log('WebSocket control: connected');
                         }
                     } catch (e) {
                         // Ignore non-JSON messages
+                        console.debug('Non-JSON WebSocket message:', event.data);
                     }
                 };
 

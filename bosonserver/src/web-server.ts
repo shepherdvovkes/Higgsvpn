@@ -99,31 +99,57 @@ export class WebServer {
       });
     });
 
-    // Poll API for client updates and broadcast to dashboard clients
+    // Poll API for client and node updates and broadcast to dashboard clients
     setInterval(async () => {
       if (this.dashboardClients.size === 0) return;
 
       try {
         const axios = (await import('axios')).default;
-        const response = await axios.get(`${API_URL}/api/v1/clients`, {
+        
+        // Fetch clients
+        const clientsResponse = await axios.get(`${API_URL}/api/v1/clients`, {
           validateStatus: () => true,
+          timeout: 5000,
         });
 
-        if (response.status === 200) {
-          const message = JSON.stringify({
+        // Fetch nodes
+        const nodesResponse = await axios.get(`${API_URL}/api/v1/nodes`, {
+          validateStatus: () => true,
+          timeout: 5000,
+        });
+
+        // Broadcast clients update
+        if (clientsResponse.status === 200) {
+          const clientsMessage = JSON.stringify({
             type: 'clients-update',
-            data: response.data,
+            data: clientsResponse.data,
           });
 
-          // Broadcast to all connected clients
           this.dashboardClients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
-              client.send(message);
+              client.send(clientsMessage);
+            }
+          });
+        }
+
+        // Broadcast nodes update
+        if (nodesResponse.status === 200) {
+          const nodesMessage = JSON.stringify({
+            type: 'nodes-update',
+            data: nodesResponse.data,
+          });
+
+          this.dashboardClients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(nodesMessage);
             }
           });
         }
       } catch (error: any) {
-        logger.error('Failed to fetch clients for dashboard broadcast', { error: error.message });
+        logger.error('Failed to fetch data for dashboard broadcast', { 
+          error: error.message,
+          apiUrl: API_URL,
+        });
       }
     }, 5000); // Update every 5 seconds
   }

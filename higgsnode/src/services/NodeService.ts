@@ -16,6 +16,8 @@ import { DNSHandler } from './DNSHandler';
 import { HealthCheckManager } from '../managers/HealthCheckManager';
 import { ClientRateLimiter } from '../managers/ClientRateLimiter';
 import { TrafficShaper } from '../managers/TrafficShaper';
+import { PacketForwarder } from './PacketForwarder';
+import { WebSocketRelay } from './WebSocketRelay';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { getLocalIPv4 } from '../utils/network';
@@ -39,6 +41,8 @@ export class NodeService {
   private healthCheckManager: HealthCheckManager;
   private clientRateLimiter: ClientRateLimiter;
   private trafficShaper: TrafficShaper;
+  private packetForwarder: PacketForwarder;
+  private webSocketRelay: WebSocketRelay | null = null;
   private nodeId: string;
   private isRunning = false;
 
@@ -64,6 +68,7 @@ export class NodeService {
     this.dnsHandler = new DNSHandler(config.wireguard.interfaceName);
     this.clientRateLimiter = new ClientRateLimiter(config.wireguard.interfaceName);
     this.trafficShaper = new TrafficShaper();
+    this.packetForwarder = new PacketForwarder();
     
     // Health check manager (will be initialized after routing engine is ready)
     this.healthCheckManager = new HealthCheckManager(
@@ -110,6 +115,113 @@ export class NodeService {
         // Connection manager will handle status updates in heartbeat
       }
     });
+
+    // Connection manager: когда нода зарегистрирована, создать WebSocket relay
+    this.connectionManager.on('registered', async (response) => {
+      await this.setupWebSocketRelay(response);
+    });
+
+    // Connection manager: обработка server actions (например, создание relay сессии)
+    this.connectionManager.on('serverAction', async (action) => {
+      if (action.type === 'createRelaySession' && action.payload?.sessionId && action.payload?.relayEndpoint) {
+        await this.setupWebSocketRelayForSession(
+          action.payload.sessionId,
+          action.payload.relayEndpoint
+        );
+      }
+    });
+  }
+
+  /**
+   * Настраивает WebSocket relay соединение с bosonserver
+   * Нода принимает соединения только от bosonserver через WebSocket
+   */
+  private async setupWebSocketRelay(registerResponse?: any): Promise<void> {
+    try {
+      const relayServers = this.connectionManager.getRelayServers();
+      
+      if (!relayServers || relayServers.length === 0) {
+        logger.warn('No relay servers available, WebSocket relay will be created when session is established');
+        return;
+      }
+
+      // Использовать первый доступный relay server
+      const relayServer = relayServers[0];
+      // Построить WebSocket URL из relay server информации
+      const protocol = relayServer.protocol === 'websocket' ? 'ws' : 'ws';
+      const relayUrl = `${protocol}://${relayServer.host}:${relayServer.port}/relay/node/${this.nodeId}`;
+      
+      logger.info('Setting up WebSocket relay connection', { relayUrl, nodeId: this.nodeId });
+      
+      // WebSocket relay будет создан когда bosonserver создаст сессию для клиента
+      // Пока что просто логируем
+      logger.info('WebSocket relay will be established when client connects');
+    } catch (error) {
+      logger.error('Failed to setup WebSocket relay', { error });
+    }
+  }
+
+  /**
+   * Создает WebSocket relay соединение для конкретной сессии
+   */
+  private async setupWebSocketRelayForSession(sessionId: string, relayEndpoint: string): Promise<void> {
+    try {
+      // Если уже есть соединение для этой сессии, не создавать новое
+      if (this.webSocketRelay && this.webSocketRelay.isConnectedToRelay()) {
+        logger.debug('WebSocket relay already connected', { sessionId });
+        return;
+      }
+
+      logger.info('Creating WebSocket relay connection for session', { sessionId, relayEndpoint });
+
+      // Создать WebSocket relay соединение
+      this.webSocketRelay = new WebSocketRelay({
+        url: relayEndpoint,
+        sessionId: sessionId,
+        reconnect: true,
+        reconnectInterval: 5000,
+        maxReconnectAttempts: 10,
+      });
+
+      // Обработчик пакетов от bosonserver
+      this.webSocketRelay.on('data', async (message) => {
+        try {
+          const packet = message.payload as Buffer;
+          if (Buffer.isBuffer(packet)) {
+            // Отправить пакет в интернет через PacketForwarder
+            await this.packetForwarder.forwardPacket(packet, message.sessionId);
+          }
+        } catch (error) {
+          logger.error('Failed to process relay packet', { error, sessionId: message.sessionId });
+        }
+      });
+
+      // Обработчик входящих пакетов от PacketForwarder (ответы из интернета)
+      this.packetForwarder.on('incomingPacket', (data: { packet: Buffer; sourceIP: string; sourcePort: number }) => {
+        if (this.webSocketRelay && this.webSocketRelay.isConnectedToRelay()) {
+          // Отправить пакет обратно через WebSocket к bosonserver
+          this.webSocketRelay.sendData(data.packet, 'node-to-client');
+        }
+      });
+
+      this.webSocketRelay.on('connected', () => {
+        logger.info('WebSocket relay connected', { sessionId });
+      });
+
+      this.webSocketRelay.on('disconnected', () => {
+        logger.warn('WebSocket relay disconnected', { sessionId });
+      });
+
+      this.webSocketRelay.on('error', (error) => {
+        logger.error('WebSocket relay error', { error, sessionId });
+      });
+
+      // Подключиться к relay
+      await this.webSocketRelay.connect();
+    } catch (error) {
+      logger.error('Failed to setup WebSocket relay for session', { error, sessionId });
+      throw error;
+    }
   }
 
   async start(): Promise<void> {
@@ -185,6 +297,12 @@ export class NodeService {
       // 10. Start session manager
       this.sessionManager.start();
 
+      // 10.5. Start packet forwarder (обработка пакетов от bosonserver)
+      await this.packetForwarder.start();
+
+      // 10.6. Setup WebSocket relay connection to bosonserver (после регистрации)
+      // WebSocket relay будет создан когда bosonserver отправит sessionId через heartbeat или action
+
       // 11. Initialize port forwarding (optional)
       try {
         await this.portForwardingService.initialize();
@@ -233,6 +351,13 @@ export class NodeService {
       this.cleanupManager.register('healthCheck', () => this.healthCheckManager.stop());
       this.cleanupManager.register('clientRateLimiter', () => this.clientRateLimiter.cleanup());
       this.cleanupManager.register('trafficShaper', () => this.trafficShaper.cleanup());
+      this.cleanupManager.register('packetForwarder', () => this.packetForwarder.stop());
+      this.cleanupManager.register('webSocketRelay', () => {
+        if (this.webSocketRelay) {
+          this.webSocketRelay.disconnect();
+          this.webSocketRelay = null;
+        }
+      });
       // Register connection cleanup last - will execute first to notify bosonserver immediately
       this.cleanupManager.register('connection', () => this.connectionManager.disconnect());
 
