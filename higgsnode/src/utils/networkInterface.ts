@@ -226,27 +226,57 @@ function getMacOSPhysicalInterface(): PhysicalInterface | null {
   try {
     // Получить default gateway
     const routeOutput = execSync('route -n get default', { encoding: 'utf-8' });
-    const gatewayMatch = routeOutput.match(/gateway: ([\d.]+)/);
-    const interfaceMatch = routeOutput.match(/interface: (\w+)/);
+    const gatewayMatch = routeOutput.match(/gateway:\s+([\d.]+)/);
+    const interfaceMatch = routeOutput.match(/interface:\s+(\S+)/);
     
     if (!gatewayMatch || !interfaceMatch) {
+      logger.debug('Failed to parse route output', { routeOutput });
       return null;
     }
 
     const gateway = gatewayMatch[1];
-    const interfaceName = interfaceMatch[1];
+    const interfaceName = interfaceMatch[1].trim();
 
     // Получить IP адрес интерфейса
     const ipOutput = execSync(`ifconfig ${interfaceName}`, { encoding: 'utf-8' });
-    const ipMatch = ipOutput.match(/inet ([\d.]+)/);
     
-    if (!ipMatch) {
+    // Найти IPv4 адрес (не loopback и не link-local)
+    const ipLines = ipOutput.split('\n');
+    let ipv4: string | null = null;
+    let ipv6: string | undefined;
+    
+    for (const line of ipLines) {
+      // IPv4: inet 192.168.1.100 netmask 0xffffff00 broadcast 192.168.1.255
+      const ipv4Match = line.match(/inet ([\d.]+)/);
+      if (ipv4Match) {
+        const ip = ipv4Match[1];
+        // Пропустить loopback и link-local адреса
+        if (ip !== '127.0.0.1' && !ip.startsWith('169.254.')) {
+          ipv4 = ip;
+          break;
+        }
+      }
+      
+      // IPv6: inet6 fe80::1%lo0 prefixlen 64 scopeid 0x1
+      const ipv6Match = line.match(/inet6 ([\da-f:]+)/i);
+      if (ipv6Match && !ipv6) {
+        const ip = ipv6Match[1];
+        // Пропустить link-local (fe80::)
+        if (!ip.startsWith('fe80::')) {
+          ipv6 = ip;
+        }
+      }
+    }
+    
+    if (!ipv4) {
+      logger.debug('No valid IPv4 address found for interface', { interfaceName, ipOutput });
       return null;
     }
 
     return {
       name: interfaceName,
-      ipv4: ipMatch[1],
+      ipv4: ipv4,
+      ipv6: ipv6,
       gateway: gateway,
       isDefault: true,
     };

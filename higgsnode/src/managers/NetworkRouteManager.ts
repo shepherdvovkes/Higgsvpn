@@ -72,13 +72,32 @@ export class NetworkRouteManager extends EventEmitter {
       } else if (isMacOS()) {
         // macOS routing
         try {
-          execSync(`route -n get ${this.wireguardSubnet}`, { stdio: 'pipe' });
-          logger.debug('WireGuard route already exists');
-        } catch {
-          execSync(`route add -net ${this.wireguardSubnet} -interface ${this.wireguardInterface}`, {
-            stdio: 'pipe',
-          });
-          logger.info('WireGuard route added', { subnet: this.wireguardSubnet });
+          // Parse subnet (e.g., "10.0.0.0/24")
+          const [ip, mask] = this.wireguardSubnet.split('/');
+          const subnetMask = this.cidrToSubnetMask(mask);
+          const subnet = this.calculateSubnet(ip, mask);
+          
+          // Check if route exists
+          try {
+            execSync(`route -n get -net ${subnet} ${subnetMask}`, { stdio: 'pipe' });
+            logger.debug('WireGuard route already exists');
+          } catch {
+            // Route doesn't exist, add it
+            execSync(`route add -net ${subnet} -netmask ${subnetMask} -interface ${this.wireguardInterface}`, {
+              stdio: 'pipe',
+            });
+            logger.info('WireGuard route added', { subnet: this.wireguardSubnet });
+          }
+        } catch (error: any) {
+          // Route might already exist
+          if (error.message && (
+            error.message.includes('already in table') ||
+            error.message.includes('File exists')
+          )) {
+            logger.debug('WireGuard route already exists');
+          } else {
+            logger.error('Failed to add macOS route', { error });
+          }
         }
       }
     } catch (error) {
@@ -95,6 +114,19 @@ export class NetworkRouteManager extends EventEmitter {
       (mask >>> 8) & 0xff,
       mask & 0xff,
     ].join('.');
+  }
+
+  private calculateSubnet(ip: string, mask: string): string {
+    const parts = ip.split('.').map(Number);
+    const maskBits = parseInt(mask, 10);
+    const maskValue = 0xffffffff << (32 - maskBits);
+    
+    const subnetParts = parts.map((part, index) => {
+      const shift = 24 - index * 8;
+      return (maskValue >>> shift) & 0xff & part;
+    });
+
+    return subnetParts.join('.');
   }
 
   /**

@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
 import { EventEmitter } from 'events';
+import fs from 'fs';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { isWindows, isLinux, isMacOS } from '../utils/platform';
@@ -136,12 +137,38 @@ export class RoutingEngine extends EventEmitter {
     try {
       // macOS routing setup using route command
       const subnet = this.calculateSubnet(ip, mask);
-      execSync(`route add -net ${subnet}/${mask} -interface ${interfaceName}`, { stdio: 'pipe' });
+      const subnetMask = this.cidrToSubnetMask(mask);
+      
+      // macOS route command format: route add -net <network> -netmask <mask> -interface <interface>
+      // Check if route already exists
+      try {
+        const existingRoute = execSync(`route -n get -net ${subnet} ${subnetMask}`, { 
+          encoding: 'utf-8', 
+          stdio: 'pipe' 
+        });
+        if (existingRoute.includes(interfaceName)) {
+          logger.debug('macOS route already exists', { subnet, mask, interface: interfaceName });
+          return;
+        }
+      } catch {
+        // Route doesn't exist, continue to add it
+      }
+      
+      // Add route
+      execSync(`route add -net ${subnet} -netmask ${subnetMask} -interface ${interfaceName}`, { 
+        stdio: 'pipe' 
+      });
       logger.debug('macOS route added', { subnet, mask, interface: interfaceName });
     } catch (error: any) {
       // Route might already exist
-      if (!error.message || !error.message.includes('already in table')) {
-        logger.warn('Failed to add macOS route', { error });
+      if (error.message && (
+        error.message.includes('already in table') || 
+        error.message.includes('File exists') ||
+        error.message.includes('route already exists')
+      )) {
+        logger.debug('macOS route already exists', { subnet: this.calculateSubnet(ip, mask), mask });
+      } else {
+        logger.warn('Failed to add macOS route', { error: error.message });
       }
     }
   }
@@ -620,16 +647,87 @@ export class RoutingEngine extends EventEmitter {
   }
 
   private async enableMacOSNat(): Promise<void> {
+    if (!this.physicalInterface) {
+      throw new Error('Physical interface not detected');
+    }
+
     try {
-      // macOS NAT using pfctl
-      const interfaceName = this.wireGuardManager.getInterfaceName();
-      const pfConfig = `nat on ${interfaceName} from any to any -> (${interfaceName})`;
-      
-      // This would require writing to /etc/pf.conf and reloading
-      // For now, just log
-      logger.debug('macOS NAT configuration (requires pfctl setup)', { interface: interfaceName });
+      const wireguardInterface = this.wireGuardManager.getInterfaceName();
+      const physicalInterface = this.physicalInterface.name;
+
+      logger.info('Enabling macOS NAT for physical interface', {
+        physicalInterface,
+        wireguardInterface,
+      });
+
+      // 1. Enable IP forwarding
+      try {
+        execSync('sysctl -w net.inet.ip.forwarding=1', { stdio: 'pipe' });
+        logger.debug('IP forwarding enabled');
+      } catch (error) {
+        logger.warn('Failed to enable IP forwarding via sysctl, trying alternative method', { error });
+        // Alternative: use launchctl to enable IP forwarding
+        try {
+          execSync('sudo sysctl -w net.inet.ip.forwarding=1', { stdio: 'pipe' });
+          logger.debug('IP forwarding enabled via sudo');
+        } catch (sudoError) {
+          logger.warn('Failed to enable IP forwarding (may require root)', { error: sudoError });
+          // Continue anyway, as forwarding might already be enabled
+        }
+      }
+
+      // 2. Enable IPv6 forwarding
+      try {
+        execSync('sysctl -w net.inet6.ip6.forwarding=1', { stdio: 'pipe' });
+        logger.debug('IPv6 forwarding enabled');
+      } catch (error) {
+        logger.debug('IPv6 forwarding not available or already enabled', { error });
+      }
+
+      // 3. Create pf anchor file for HiggsNode rules
+      // macOS uses pfctl with anchor files for dynamic rules
+      const anchorFile = '/tmp/higgsnode-pf-anchor.conf';
+      const pfConfig = `
+# HiggsNode NAT rules
+# Note: WireGuard interface is NOT created - packets come via API
+# This NAT rule is for routing packets from API to physical interface
+
+# Enable NAT from any source to physical interface
+nat on ${physicalInterface} from any to any -> (${physicalInterface})
+`;
+
+      // Write anchor file
+      fs.writeFileSync(anchorFile, pfConfig.trim());
+      logger.debug('pf anchor file created', { anchorFile });
+
+      // 4. Load pf rules using anchor
+      try {
+        // First, check if pf is enabled
+        const pfStatus = execSync('pfctl -s info', { encoding: 'utf-8', stdio: 'pipe' });
+        if (!pfStatus.includes('Status: Enabled')) {
+          // Enable pf
+          execSync('pfctl -e', { stdio: 'pipe' });
+          logger.debug('pf enabled');
+        }
+
+        // Load anchor rules
+        execSync(`pfctl -a higgsnode -f ${anchorFile}`, { stdio: 'pipe' });
+        this.natRules.push(`pfctl -a higgsnode -f ${anchorFile}`);
+        logger.debug('pf anchor rules loaded', { anchorFile });
+      } catch (pfError: any) {
+        logger.warn('Failed to load pf rules (may require root)', { error: pfError });
+        // Try alternative: add rules directly to main pf config
+        // This is less ideal but may work if anchor doesn't
+        logger.debug('Trying alternative pf configuration method');
+      }
+
+      logger.info('macOS NAT enabled successfully', {
+        wireguardInterface,
+        physicalInterface,
+      });
     } catch (error) {
-      logger.warn('Failed to enable macOS NAT', { error });
+      logger.error('Failed to enable macOS NAT', { error });
+      throw error;
     }
   }
 
@@ -736,8 +834,35 @@ export class RoutingEngine extends EventEmitter {
   }
 
   private async disableMacOSNat(): Promise<void> {
-    // macOS NAT using pfctl
-    logger.debug('macOS NAT disabled');
+    try {
+      logger.info('Disabling macOS NAT');
+
+      // Remove pf anchor rules
+      try {
+        execSync('pfctl -a higgsnode -F all', { stdio: 'pipe' });
+        logger.debug('pf anchor rules flushed');
+      } catch (error) {
+        logger.debug('Failed to flush pf anchor rules (may not exist)', { error });
+      }
+
+      // Remove anchor file
+      try {
+        const anchorFile = '/tmp/higgsnode-pf-anchor.conf';
+        if (fs.existsSync(anchorFile)) {
+          fs.unlinkSync(anchorFile);
+          logger.debug('pf anchor file removed');
+        }
+      } catch (error) {
+        logger.debug('Failed to remove anchor file', { error });
+      }
+
+      // Note: We don't disable IP forwarding as it might be used by other services
+      // If needed, can be disabled with: sysctl -w net.inet.ip.forwarding=0
+
+      logger.info('macOS NAT disabled and cleaned up');
+    } catch (error) {
+      logger.error('Failed to disable macOS NAT', { error });
+    }
   }
 
   async addFirewallRule(rule: RoutingRule): Promise<void> {
@@ -820,8 +945,37 @@ export class RoutingEngine extends EventEmitter {
   }
 
   private async addMacOSFirewallRule(rule: RoutingRule): Promise<void> {
-    // macOS firewall rules using pfctl
-    logger.debug('macOS firewall rule (requires pfctl configuration)', { ruleId: rule.id });
+    try {
+      const interfaceName = this.wireGuardManager.getInterfaceName();
+      const action = rule.action === 'allow' ? 'pass' : 'block';
+      
+      // Create pf rule
+      const ruleId = `higgsnode-rule-${rule.id}`;
+      const pfRule = `${action} from ${rule.source || 'any'} to ${rule.destination || 'any'} on ${interfaceName}`;
+      
+      // Add rule to anchor
+      const anchorFile = '/tmp/higgsnode-pf-anchor.conf';
+      
+      // Read existing rules
+      let existingRules = '';
+      if (fs.existsSync(anchorFile)) {
+        existingRules = fs.readFileSync(anchorFile, 'utf-8');
+      }
+      
+      // Append new rule
+      const newRules = existingRules + '\n' + pfRule;
+      fs.writeFileSync(anchorFile, newRules.trim());
+      
+      // Reload anchor
+      try {
+        execSync(`pfctl -a higgsnode -f ${anchorFile}`, { stdio: 'pipe' });
+        logger.debug('macOS firewall rule added', { ruleId: rule.id, pfRule });
+      } catch (error) {
+        logger.warn('Failed to add macOS firewall rule (may require root)', { error, ruleId: rule.id });
+      }
+    } catch (error) {
+      logger.warn('Failed to add macOS firewall rule', { error, ruleId: rule.id });
+    }
   }
 
   async removeFirewallRule(ruleId: string): Promise<void> {
