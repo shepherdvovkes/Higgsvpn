@@ -4,8 +4,10 @@ import { db } from './database/postgres';
 import { redis } from './database/redis';
 import { runMigrations } from './database/migrations/run-migrations';
 import { ApiGateway } from './api/gateway';
+import { WebServer } from './web-server';
 
 let apiGateway: ApiGateway;
+let webServer: WebServer;
 
 async function startServer(): Promise<void> {
   try {
@@ -24,6 +26,10 @@ async function startServer(): Promise<void> {
     apiGateway = new ApiGateway();
     await apiGateway.start();
 
+    // Initialize and start web server
+    webServer = new WebServer();
+    await webServer.start();
+
     logger.info('BosonServer started successfully');
   } catch (error) {
     logger.error('Failed to start BosonServer', { error });
@@ -36,6 +42,9 @@ async function shutdown(signal: string): Promise<void> {
   logger.info(`${signal} received, shutting down gracefully`);
   
   try {
+    if (webServer) {
+      await webServer.stop();
+    }
     if (apiGateway) {
       await apiGateway.stop();
     }

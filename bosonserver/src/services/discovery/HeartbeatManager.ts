@@ -21,7 +21,7 @@ export interface HeartbeatData {
 export class HeartbeatManager {
   private nodeRegistry: NodeRegistry;
   private cleanupInterval: NodeJS.Timeout | null = null;
-  private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly CLEANUP_INTERVAL_MS = 1 * 60 * 1000; // 1 minute - more frequent cleanup
 
   constructor(nodeRegistry: NodeRegistry) {
     this.nodeRegistry = nodeRegistry;
@@ -78,6 +78,9 @@ export class HeartbeatManager {
 
     this.cleanupInterval = setInterval(async () => {
       try {
+        // First, mark nodes as offline if they haven't sent heartbeat in 2 minutes
+        await this.nodeRegistry.markInactiveNodesOffline(2);
+        // Then, remove nodes that have been inactive for 10 minutes
         await this.nodeRegistry.removeInactiveNodes(10);
       } catch (error) {
         logger.error('Cleanup task failed', { error });

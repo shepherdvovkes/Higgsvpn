@@ -83,8 +83,8 @@ export class RoutingService {
       const expiresAt = Date.now() + 3600 * 1000; // 1 hour
       const relayEndpoint = `wss://${process.env.RELAY_HOST || 'localhost'}:${process.env.RELAY_PORT || '3000'}/relay/${sessionId}`;
 
-      // Store route in database
-      await this.storeRoute(selectedRoute, expiresAt);
+      // Store route in database with client info
+      await this.storeRoute(selectedRoute, expiresAt, request.clientId, request.clientNetworkInfo, request.requirements);
 
       // Create response
       const response: RoutingResponse = {
@@ -117,11 +117,17 @@ export class RoutingService {
     }
   }
 
-  private async storeRoute(route: RouteSelection, expiresAt: number): Promise<void> {
+  private async storeRoute(
+    route: RouteSelection, 
+    expiresAt: number, 
+    clientId?: string,
+    clientNetworkInfo?: any,
+    requirements?: any
+  ): Promise<void> {
     try {
       await db.query(
-        `INSERT INTO routes (id, type, path, estimated_latency, estimated_bandwidth, cost, priority, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO routes (id, type, path, estimated_latency, estimated_bandwidth, cost, priority, expires_at, client_id, client_network_info, requirements)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (id) DO UPDATE SET
            type = EXCLUDED.type,
            path = EXCLUDED.path,
@@ -129,7 +135,10 @@ export class RoutingService {
            estimated_bandwidth = EXCLUDED.estimated_bandwidth,
            cost = EXCLUDED.cost,
            priority = EXCLUDED.priority,
-           expires_at = EXCLUDED.expires_at`,
+           expires_at = EXCLUDED.expires_at,
+           client_id = EXCLUDED.client_id,
+           client_network_info = EXCLUDED.client_network_info,
+           requirements = EXCLUDED.requirements`,
         [
           route.id,
           route.type,
@@ -139,6 +148,9 @@ export class RoutingService {
           route.cost,
           route.priority,
           new Date(expiresAt),
+          clientId || null,
+          clientNetworkInfo ? JSON.stringify(clientNetworkInfo) : null,
+          requirements ? JSON.stringify(requirements) : null,
         ]
       );
     } catch (error) {

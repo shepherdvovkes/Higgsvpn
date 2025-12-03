@@ -118,7 +118,7 @@ export class NodeRegistry {
       const result = await db.query<Node>(
         `SELECT * FROM nodes 
          WHERE status IN ('online', 'degraded') 
-         AND last_heartbeat > NOW() - INTERVAL '5 minutes'
+         AND last_heartbeat > NOW() - INTERVAL '2 minutes'
          ORDER BY last_heartbeat DESC`
       );
 
@@ -140,6 +140,33 @@ export class NodeRegistry {
     }
   }
 
+  async markInactiveNodesOffline(inactiveThresholdMinutes = 2): Promise<number> {
+    try {
+      const result = await db.query<{ node_id: string }>(
+        `UPDATE nodes 
+         SET status = 'offline', updated_at = NOW()
+         WHERE status IN ('online', 'degraded')
+         AND last_heartbeat < NOW() - INTERVAL '${inactiveThresholdMinutes} minutes'
+         RETURNING node_id`
+      );
+
+      const updatedCount = result.length;
+      
+      // Invalidate cache for updated nodes
+      for (const row of result) {
+        await redis.del(`node:${row.node_id}`);
+      }
+
+      if (updatedCount > 0) {
+        logger.info('Marked inactive nodes as offline', { count: updatedCount });
+      }
+      return updatedCount;
+    } catch (error) {
+      logger.error('Failed to mark inactive nodes as offline', { error });
+      throw error;
+    }
+  }
+
   async removeInactiveNodes(inactiveThresholdMinutes = 10): Promise<number> {
     try {
       const result = await db.query<{ node_id: string }>(
@@ -155,7 +182,9 @@ export class NodeRegistry {
         await redis.del(`node:${row.node_id}`);
       }
 
-      logger.info('Removed inactive nodes', { count: deletedCount });
+      if (deletedCount > 0) {
+        logger.info('Removed inactive nodes', { count: deletedCount });
+      }
       return deletedCount;
     } catch (error) {
       logger.error('Failed to remove inactive nodes', { error });

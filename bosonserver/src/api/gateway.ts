@@ -5,7 +5,7 @@ import axios from 'axios';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { errorHandler } from '../utils/errors';
-import { apiRateLimiter } from './middleware/rateLimit';
+import { apiRateLimiter, dashboardRateLimiter } from './middleware/rateLimit';
 
 // Routes
 import nodesRouter from './routes/nodes';
@@ -14,6 +14,7 @@ import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
 import healthRouter from './routes/health';
 import packetsRouter from './routes/packets';
+import clientsRouter from './routes/clients';
 
 // Services
 import { DiscoveryService } from '../services/discovery/DiscoveryService';
@@ -81,7 +82,7 @@ export class ApiGateway {
       next();
     });
 
-    // Rate limiting
+    // Rate limiting for write operations (applied to routes that don't have specific limiters)
     this.app.use('/api', apiRateLimiter);
 
     // Make services available to routes
@@ -140,10 +141,14 @@ export class ApiGateway {
     // Health check routes
     this.app.use('/health', healthRouter);
 
-    // API routes
-    this.app.use('/api/v1/nodes', nodesRouter);
+    // API routes with rate limiting
+    // Read-only dashboard endpoints get more lenient rate limiting
+    this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
+    this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
+    this.app.use('/api/v1/metrics', dashboardRateLimiter, metricsRouter);
+    
+    // Write endpoints use standard rate limiting
     this.app.use('/api/v1/routing', routingRouter);
-    this.app.use('/api/v1/metrics', metricsRouter);
     this.app.use('/api/v1/turn', turnRouter);
     this.app.use('/api/v1/packets', packetsRouter);
 

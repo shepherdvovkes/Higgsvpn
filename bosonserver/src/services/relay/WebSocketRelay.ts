@@ -1,4 +1,5 @@
 import { WebSocket, WebSocketServer } from 'ws';
+import { EventEmitter } from 'events';
 import { SessionManager, RelaySession } from './SessionManager';
 import { logger } from '../../utils/logger';
 import { IncomingMessage } from 'http';
@@ -10,7 +11,7 @@ export interface RelayMessage {
   payload: Buffer | any;
 }
 
-export class WebSocketRelay {
+export class WebSocketRelay extends EventEmitter {
   private wss: WebSocketServer;
   private sessionManager: SessionManager;
   private connections = new Map<string, WebSocket>();
@@ -18,6 +19,7 @@ export class WebSocketRelay {
   private heartbeatIntervals = new Map<string, NodeJS.Timeout>();
 
   constructor(server: any, sessionManager: SessionManager) {
+    super();
     this.sessionManager = sessionManager;
     this.wss = new WebSocketServer({ 
       server,

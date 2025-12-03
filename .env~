@@ -1,0 +1,35 @@
+# Server Configuration
+NODE_ENV=production
+PORT=3000
+HOST=0.0.0.0
+
+# PostgreSQL Configuration
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=bosonserver
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password_here
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+
+# JWT Configuration
+JWT_SECRET=your_very_long_random_secret_here
+JWT_EXPIRES_IN=24h
+
+# TURN/STUN Configuration
+TURN_REALM=bosonserver
+TURN_STATIC_SECRET=your_turn_secret_here
+TURN_LISTENING_PORT=3478
+
+# Logging
+LOG_LEVEL=info
+
+# CORS Configuration
+CORS_ORIGIN=*
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100

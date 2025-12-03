@@ -17,6 +17,7 @@ const migrations = [
   '002_create_routes_table.sql',
   '003_create_metrics_table.sql',
   '004_create_sessions_table.sql',
+  '005_add_client_info_to_routes.sql',
 ];
 
 async function runMigrations(): Promise<void> {

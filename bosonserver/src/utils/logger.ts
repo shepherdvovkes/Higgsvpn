@@ -20,13 +20,18 @@ const consoleFormat = winston.format.combine(
   })
 );
 
+// Use local logs directory, fallback to /var/log/supervisor if running in Docker
+const logDir = process.env.LOG_DIR || (process.env.NODE_ENV === 'production' && process.env.DOCKER ? '/var/log/supervisor' : './logs');
+const errorLogPath = `${logDir}/bosonserver-error.log`;
+const infoLogPath = `${logDir}/bosonserver.log`;
+
 export const logger = winston.createLogger({
   level: config.logging.level,
   format: logFormat,
   defaultMeta: { service: 'bosonserver' },
   transports: [
-    new winston.transports.File({ filename: '/var/log/supervisor/bosonserver-error.log', level: 'error' }),
-    new winston.transports.File({ filename: '/var/log/supervisor/bosonserver.log' }),
+    new winston.transports.File({ filename: errorLogPath, level: 'error' }),
+    new winston.transports.File({ filename: infoLogPath }),
   ],
 });
 
