@@ -1,0 +1,40 @@
+services:
+  bosonserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bosonserver
+    ports:
+      - "3001:3000"
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "3479:3479/udp"
+      - "3480:3480/udp"
+    environment:
+      - NODE_ENV=production
+      - POSTGRES_HOST=localhost
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=bosonserver
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-BosonServer2024!Secure#Pass}
+      - REDIS_HOST=localhost
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - JWT_SECRET=${JWT_SECRET:-BosonServer2024!JWT#Secret$Key%Very&Long*Secure}
+      - TURN_STATIC_SECRET=${TURN_STATIC_SECRET:-BosonServer2024!TURN#Secret$Key}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - redis_data:/var/lib/redis
+      - ./logs:/var/log/supervisor
+    restart: unless-stopped
+    networks:
+      - bosonserver-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bosonserver-network:
+    driver: bridge
+
