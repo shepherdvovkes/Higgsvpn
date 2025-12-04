@@ -229,4 +229,3 @@ export class ApiGateway {
     }
   }
 }
-
