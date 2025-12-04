@@ -21,9 +21,10 @@ export class WebSocketRelay extends EventEmitter {
   constructor(server: any, sessionManager: SessionManager) {
     super();
     this.sessionManager = sessionManager;
+    // Don't use path filter - handle all WebSocket connections and filter in handleConnection
     this.wss = new WebSocketServer({ 
       server,
-      path: '/relay',
+      // path: '/relay', // Remove path filter to handle /relay/{sessionId}
     });
 
     this.wss.on('connection', this.handleConnection.bind(this));
@@ -33,10 +34,18 @@ export class WebSocketRelay extends EventEmitter {
   private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
     try {
       const url = new URL(req.url || '', `http://${req.headers.host}`);
+      
+      // Check if path starts with /relay/
+      if (!url.pathname.startsWith('/relay/')) {
+        logger.warn('Connection rejected: invalid path', { path: url.pathname });
+        ws.close(1008, 'Invalid path');
+        return;
+      }
+      
       const sessionId = url.pathname.split('/').pop();
 
       if (!sessionId) {
-        logger.warn('Connection rejected: missing session ID');
+        logger.warn('Connection rejected: missing session ID', { path: url.pathname });
         ws.close(1008, 'Missing session ID');
         return;
       }
@@ -339,6 +348,15 @@ export class WebSocketRelay extends EventEmitter {
 
   getActiveConnectionsCount(): number {
     return this.connections.size;
+  }
+
+  getActiveSessionIds(): Set<string> {
+    return new Set(this.connections.keys());
+  }
+
+  hasActiveConnection(sessionId: string): boolean {
+    const ws = this.connections.get(sessionId);
+    return ws !== undefined && ws.readyState === WebSocket.OPEN;
   }
 
   close(): void {

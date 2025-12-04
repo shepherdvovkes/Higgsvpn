@@ -40,10 +40,11 @@ export class ApiGateway {
 
     // Initialize services
     this.discoveryService = new DiscoveryService();
+    this.relayService = new RelayService();
     this.routingService = new RoutingService(this.discoveryService);
+    this.routingService.setRelayService(this.relayService); // Inject RelayService into RoutingService
     this.metricsService = new MetricsService(this.discoveryService);
     this.turnManager = new TurnManager();
-    this.relayService = new RelayService();
     this.wireGuardServer = new WireGuardServer(this.discoveryService);
 
     this.setupMiddleware();
@@ -142,9 +143,9 @@ export class ApiGateway {
     this.app.use('/health', healthRouter);
 
     // API routes with rate limiting
-    // Read-only dashboard endpoints get more lenient rate limiting
-    this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
-    this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
+        // Read-only dashboard endpoints get more lenient rate limiting
+        this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
+        this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
     
     // Metrics and heartbeat endpoints use nodeRateLimiter (more lenient for frequent updates)
     this.app.use('/api/v1/metrics', nodeRateLimiter, metricsRouter);

@@ -29,6 +29,14 @@ export class WireGuardManager {
   }
 
   private getWireGuardConfigDir(): string {
+    // В Docker контейнере используем /tmp для конфигурации
+    if (process.env.WIREGUARD_CONFIG_DIR) {
+      return process.env.WIREGUARD_CONFIG_DIR;
+    }
+    // Проверить, запущены ли мы в Docker
+    if (fs.existsSync('/.dockerenv') || process.env.DOCKER_CONTAINER === 'true') {
+      return '/tmp/wireguard';
+    }
     // Проверить, где установлен wg-quick
     try {
       const wgPath = execSync('which wg-quick', { encoding: 'utf-8' }).trim();
@@ -136,20 +144,52 @@ export class WireGuardManager {
       logger.info('WireGuard config written', { path: this.configPath });
 
       // Поднять интерфейс
+      // Использовать полный путь к конфигурации, если она не в /etc/wireguard/
+      const configFile = this.configPath;
+      // Проверить, что configDir правильно определен
+      logger.info('WireGuard setup info', { configDir, configPath: this.configPath, interfaceName: this.interfaceName });
+      const wgQuickCommand = configDir === '/etc/wireguard' 
+        ? `wg-quick up ${this.interfaceName}`
+        : `wg-quick up ${configFile}`;
+      
+      logger.info('Executing WireGuard command', { command: wgQuickCommand, configDir, configPath: this.configPath });
+      
       try {
-        execSync(`wg-quick up ${this.interfaceName}`, {
+        // Попробовать использовать wg-quick, но игнорировать ошибки sysctl
+        const result = execSync(wgQuickCommand, {
           stdio: 'pipe',
           cwd: configDir,
         });
         logger.info('WireGuard interface created and started', { interface: this.interfaceName });
       } catch (error: any) {
+        // Проверить, не является ли ошибка только из-за sysctl (read-only файловая система в Docker)
+        const errorOutput = error.stderr?.toString() || error.message || '';
+        if (errorOutput.includes('sysctl') && errorOutput.includes('Read-only')) {
+          // Интерфейс может быть создан, но sysctl не удалось установить
+          // Проверить, существует ли интерфейс
+          try {
+            execSync(`wg show ${this.interfaceName}`, { stdio: 'pipe' });
+            logger.warn('WireGuard interface created but sysctl failed (read-only filesystem)', { 
+              interface: this.interfaceName,
+              note: 'Interface should still work'
+            });
+            return; // Интерфейс создан, продолжаем
+          } catch (checkError) {
+            // Интерфейс не создан, пробрасываем ошибку
+            logger.error('WireGuard interface not created after sysctl error', { error: checkError });
+          }
+        }
+        
         // Проверить, не существует ли уже интерфейс
         if (error.message && error.message.includes('already exists')) {
           logger.info('WireGuard interface already exists');
           // Попытаться перезапустить
           try {
-            execSync(`wg-quick down ${this.interfaceName}`, { stdio: 'pipe', cwd: configDir });
-            execSync(`wg-quick up ${this.interfaceName}`, { stdio: 'pipe', cwd: configDir });
+            const downCommand = configDir === '/etc/wireguard'
+              ? `wg-quick down ${this.interfaceName}`
+              : `wg-quick down ${configFile}`;
+            execSync(downCommand, { stdio: 'pipe', cwd: configDir });
+            execSync(wgQuickCommand, { stdio: 'pipe', cwd: configDir });
             logger.info('WireGuard interface restarted');
           } catch (restartError) {
             logger.warn('Failed to restart WireGuard interface', { error: restartError });

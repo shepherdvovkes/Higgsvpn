@@ -214,7 +214,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>BosonServer - Clients Dashboard</h1>
+            <h1>BosonServer - Clients & Nodes Dashboard</h1>
             <div class="status">
                 <span class="status-indicator" id="statusIndicator"></span>
                 <span id="statusText">Connecting...</span>
@@ -236,12 +236,14 @@
             </div>
         </div>
 
-        <div id="clientsTable">
+        <div id="clientsTable" style="margin-bottom: 40px;">
+            <h2 style="font-size: 20px; margin-bottom: 16px; color: #4caf50;">Clients</h2>
             <table>
                 <thead>
                     <tr>
                         <th>Client ID</th>
                         <th>Node ID</th>
+                        <th>Connection Type</th>
                         <th>Status</th>
                         <th>Network Info</th>
                         <th>Requirements</th>
@@ -251,8 +253,32 @@
                 </thead>
                 <tbody id="clientsBody">
                     <tr>
-                        <td colspan="7" class="empty-state">
+                        <td colspan="8" class="empty-state">
                             <div>No clients connected</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div id="nodesTable" style="margin-bottom: 40px;">
+            <h2 style="font-size: 20px; margin-bottom: 16px; color: #4caf50;">Nodes</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node ID</th>
+                        <th>Status</th>
+                        <th>Network Info</th>
+                        <th>Capabilities</th>
+                        <th>Location</th>
+                        <th>Last Heartbeat</th>
+                        <th>Registered</th>
+                    </tr>
+                </thead>
+                <tbody id="nodesBody">
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <div>No nodes connected</div>
                         </td>
                     </tr>
                 </tbody>
@@ -276,6 +302,7 @@
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
         const clientsBody = document.getElementById('clientsBody');
+        const nodesBody = document.getElementById('nodesBody');
         const totalClientsEl = document.getElementById('totalClients');
         const totalNodesEl = document.getElementById('totalNodes');
         const lastUpdateEl = document.getElementById('lastUpdate');
@@ -317,7 +344,7 @@
             if (!clients || clients.length === 0) {
                 clientsBody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="empty-state">
+                        <td colspan="8" class="empty-state">
                             <div>No clients connected</div>
                             <div style="font-size: 11px; color: #666; margin-top: 8px;">Clients will appear here when they connect</div>
                         </td>
@@ -334,10 +361,15 @@
                 const clientId = client.clientId || client.client_id || `Unknown-${index}`;
                 const nodeId = client.nodeId || client.node_id || 'N/A';
                 const status = client.status || 'unknown';
+                const connectionType = client.connectionType || 'Unknown';
                 
                 // Show full clientId on hover, truncated in display
                 const clientIdDisplay = clientId && clientId.length > 12 ? clientId.substring(0, 12) + '...' : (clientId || 'N/A');
                 const nodeIdDisplay = nodeId && nodeId.length > 12 ? nodeId.substring(0, 12) + '...' : (nodeId || 'N/A');
+                
+                // Connection type badge styling
+                const connectionTypeClass = connectionType === 'WebSocket' ? 'ws' : connectionType === 'WireGuard' ? 'wg' : 'unknown';
+                const connectionTypeColor = connectionType === 'WebSocket' ? '#2196F3' : connectionType === 'WireGuard' ? '#FF9800' : '#666';
                 
                 return `
                     <tr>
@@ -346,6 +378,9 @@
                         </td>
                         <td>
                             <div class="client-id" title="${nodeId}">${nodeIdDisplay}</div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${connectionTypeClass}" style="background: ${connectionTypeColor};">${connectionType}</span>
                         </td>
                         <td>
                             <span class="status-badge ${status}">${status}</span>
@@ -375,6 +410,83 @@
                         </td>
                         <td class="timestamp" title="${client.createdAt ? new Date(client.createdAt).toLocaleString() : '--'}">${formatRelativeTime(client.createdAt)}</td>
                         <td class="timestamp" title="${client.expiresAt ? new Date(client.expiresAt).toLocaleString() : '--'}">${formatRelativeTime(client.expiresAt)}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderNodes(nodes) {
+            console.log('Rendering nodes:', nodes.length, nodes);
+            
+            if (!nodes || nodes.length === 0) {
+                nodesBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <div>No nodes connected</div>
+                            <div style="font-size: 11px; color: #666; margin-top: 8px;">Nodes will appear here when they connect</div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            nodesBody.innerHTML = nodes.map((node, index) => {
+                console.log(`Rendering node ${index}:`, node);
+                
+                const networkInfo = node.networkInfo || {};
+                const capabilities = node.capabilities || {};
+                const location = node.location || {};
+                const nodeId = node.nodeId || node.node_id || `Unknown-${index}`;
+                const status = node.status || 'unknown';
+                
+                // Show full nodeId on hover, truncated in display
+                const nodeIdDisplay = nodeId && nodeId.length > 12 ? nodeId.substring(0, 12) + '...' : (nodeId || 'N/A');
+                
+                return `
+                    <tr>
+                        <td>
+                            <div class="client-id" title="${nodeId}">${nodeIdDisplay}</div>
+                        </td>
+                        <td>
+                            <span class="status-badge ${status}">${status}</span>
+                        </td>
+                        <td>
+                            <div class="info-item">
+                                <div class="info-label">IPv4:</div>
+                                <div class="info-value">${networkInfo.ipv4 || '--'}</div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">NAT Type:</div>
+                                <div class="info-value">${networkInfo.natType || networkInfo.nat_type || '--'}</div>
+                            </div>
+                            ${networkInfo.stunMappedAddress ? `
+                            <div class="info-item">
+                                <div class="info-label">Mapped IP:</div>
+                                <div class="info-value">${networkInfo.stunMappedAddress}</div>
+                            </div>
+                            ` : ''}
+                            ${networkInfo.localPort ? `
+                            <div class="info-item">
+                                <div class="info-label">Port:</div>
+                                <div class="info-value">${networkInfo.localPort}</div>
+                            </div>
+                            ` : ''}
+                        </td>
+                        <td>
+                            ${capabilities.maxConnections ? `<div class="info-item"><div class="info-label">Max Connections:</div><div class="info-value">${capabilities.maxConnections}</div></div>` : ''}
+                            ${capabilities.bandwidth ? `<div class="info-item"><div class="info-label">Bandwidth:</div><div class="info-value">↑${capabilities.bandwidth.up || 0} ↓${capabilities.bandwidth.down || 0} Mbps</div></div>` : ''}
+                            ${capabilities.routing !== undefined ? `<div class="info-item"><div class="info-label">Routing:</div><div class="info-value">${capabilities.routing ? 'Yes' : 'No'}</div></div>` : ''}
+                            ${capabilities.natting !== undefined ? `<div class="info-item"><div class="info-label">NAT:</div><div class="info-value">${capabilities.natting ? 'Yes' : 'No'}</div></div>` : ''}
+                            ${!capabilities.maxConnections && !capabilities.bandwidth && capabilities.routing === undefined && capabilities.natting === undefined ? '<div class="info-value">--</div>' : ''}
+                        </td>
+                        <td>
+                            ${location.country ? `<div class="info-item"><div class="info-label">Country:</div><div class="info-value">${location.country}</div></div>` : ''}
+                            ${location.region ? `<div class="info-item"><div class="info-label">Region:</div><div class="info-value">${location.region}</div></div>` : ''}
+                            ${location.coordinates ? `<div class="info-item"><div class="info-label">Coordinates:</div><div class="info-value">${location.coordinates[0]}, ${location.coordinates[1]}</div></div>` : ''}
+                            ${!location.country && !location.region && !location.coordinates ? '<div class="info-value">--</div>' : ''}
+                        </td>
+                        <td class="timestamp" title="${node.lastHeartbeat ? new Date(node.lastHeartbeat).toLocaleString() : '--'}">${formatRelativeTime(node.lastHeartbeat)}</td>
+                        <td class="timestamp" title="${node.registeredAt ? new Date(node.registeredAt).toLocaleString() : '--'}">${formatRelativeTime(node.registeredAt)}</td>
                     </tr>
                 `;
             }).join('');
@@ -422,24 +534,55 @@
                 renderClients(clients);
                 totalClientsEl.textContent = data.count || clients.length || 0;
                 lastUpdateEl.textContent = new Date().toLocaleTimeString();
-
-                // Also fetch nodes count
-                try {
-                    const nodesResponse = await fetch(`${API_URL}/api/v1/nodes`);
-                    if (nodesResponse.ok) {
-                        const nodesData = await nodesResponse.json();
-                        totalNodesEl.textContent = nodesData.count || 0;
-                    }
-                } catch (e) {
-                    console.error('Failed to fetch nodes:', e);
-                }
             } catch (error) {
                 console.error('Failed to fetch clients:', error);
                 // Show error in UI
                 clientsBody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="empty-state">
+                        <td colspan="8" class="empty-state">
                             <div>Error loading clients: ${error.message}</div>
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+
+        async function fetchNodes() {
+            try {
+                const response = await fetch(`${API_URL}/api/v1/nodes`);
+                
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        console.warn('Rate limited, will retry...');
+                        return;
+                    }
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+                }
+                
+                const data = await response.json();
+                
+                console.log('Nodes API Response:', {
+                    count: data.count,
+                    nodesCount: data.nodes ? data.nodes.length : 0,
+                    sample: data.nodes && data.nodes.length > 0 ? data.nodes[0] : null
+                });
+                
+                if (!data || typeof data !== 'object') {
+                    throw new Error('Invalid response format');
+                }
+                
+                const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+                
+                renderNodes(nodes);
+                totalNodesEl.textContent = data.count || nodes.length || 0;
+            } catch (error) {
+                console.error('Failed to fetch nodes:', error);
+                // Show error in UI
+                nodesBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="empty-state">
+                            <div>Error loading nodes: ${error.message}</div>
                         </td>
                     </tr>
                 `;
@@ -454,6 +597,7 @@
                     console.log('WebSocket connected');
                     updateStatus(true);
                     fetchClients();
+                    fetchNodes();
                 };
 
                 ws.onmessage = (event) => {
@@ -462,12 +606,7 @@
                         if (data.type === 'clients-update') {
                             fetchClients();
                         } else if (data.type === 'nodes-update') {
-                            // Update nodes count
-                            if (data.data && typeof data.data.count !== 'undefined') {
-                                totalNodesEl.textContent = data.data.count || 0;
-                            }
-                            // Also refresh clients to ensure consistency
-                            fetchClients();
+                            fetchNodes();
                         } else if (data.type === 'heartbeat') {
                             // Just acknowledge heartbeat
                             console.debug('Heartbeat received');
@@ -499,10 +638,14 @@
 
         // Initial fetch
         fetchClients();
+        fetchNodes();
         connectWebSocket();
 
         // Poll for updates every 30 seconds as fallback (WebSocket is primary)
-        setInterval(fetchClients, 30000);
+        setInterval(() => {
+            fetchClients();
+            fetchNodes();
+        }, 30000);
     </script>
 </body>
 </html>

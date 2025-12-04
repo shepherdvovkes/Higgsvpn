@@ -37,9 +37,15 @@ export class RelayService {
     try {
       const sessionId = uuidv4();
       const expiresAt = new Date(Date.now() + ttl * 1000);
-      const host = process.env.RELAY_HOST || 'localhost';
-      const port = process.env.RELAY_PORT || '3000';
-      const relayEndpoint = `wss://${host}:${port}/relay/${sessionId}`;
+      // Использовать правильный хост и протокол
+      const relayHost = process.env.RELAY_HOST || 
+        process.env.WIREGUARD_SERVER_HOST || 
+        (process.env.PORT === '3003' ? 'mail.s0me.uk' : 'localhost');
+      const relayPort = process.env.RELAY_PORT || process.env.PORT || '3000';
+      // Использовать ws:// для HTTP или wss:// для HTTPS
+      const relayProtocol = process.env.RELAY_PROTOCOL || 
+        (relayPort === '3003' || relayHost.includes('localhost') ? 'ws' : 'wss');
+      const relayEndpoint = `${relayProtocol}://${relayHost}:${relayPort}/relay/${sessionId}`;
 
       await this.sessionManager.createSession(
         sessionId,
@@ -78,6 +84,20 @@ export class RelayService {
       return 0;
     }
     return this.webSocketRelay.getActiveConnectionsCount();
+  }
+
+  getActiveWebSocketSessionIds(): Set<string> {
+    if (!this.webSocketRelay) {
+      return new Set();
+    }
+    return this.webSocketRelay.getActiveSessionIds();
+  }
+
+  hasActiveWebSocketConnection(sessionId: string): boolean {
+    if (!this.webSocketRelay) {
+      return false;
+    }
+    return this.webSocketRelay.hasActiveConnection(sessionId);
   }
 
   private startCleanupTask(): void {

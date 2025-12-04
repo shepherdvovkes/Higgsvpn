@@ -75,6 +75,10 @@ export class ClientService extends EventEmitter {
       // 4. Setup WireGuard interface
       // Клиент подключается к bosonserver через WireGuard UDP
       // Bosonserver ретранслирует пакеты через WebSocket к ноде
+      logger.info('Checking WireGuard config', { 
+        hasWireguardConfig: !!routeResponse.selectedRoute.wireguardConfig,
+        wireguardConfig: routeResponse.selectedRoute.wireguardConfig 
+      });
       if (routeResponse.selectedRoute.wireguardConfig) {
         logger.info('Setting up WireGuard interface');
         try {

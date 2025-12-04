@@ -42,12 +42,17 @@ export class RoutingService {
   private routeSelector: RouteSelector;
   private loadBalancer: LoadBalancer;
   private discoveryService: DiscoveryService;
+  private relayService?: any; // RelayService, injected via setter
   private readonly CACHE_TTL = 300; // 5 minutes
 
   constructor(discoveryService: DiscoveryService) {
     this.routeSelector = new RouteSelector();
     this.loadBalancer = new LoadBalancer();
     this.discoveryService = discoveryService;
+  }
+
+  setRelayService(relayService: any): void {
+    this.relayService = relayService;
   }
 
   async requestRoute(request: RoutingRequest): Promise<RoutingResponse> {
@@ -86,16 +91,46 @@ export class RoutingService {
       // Generate session token and endpoint
       const sessionId = uuidv4();
       const expiresAt = Date.now() + 3600 * 1000; // 1 hour
-      // Использовать правильный хост для relay endpoint
-      const relayHost = process.env.RELAY_HOST || 
-        process.env.WIREGUARD_SERVER_HOST || 
-        (process.env.PORT === '3003' ? 'mail.s0me.uk' : 'localhost');
-      const relayPort = process.env.RELAY_PORT || process.env.PORT || '3000';
-      // Использовать ws:// для HTTP или wss:// для HTTPS
-      // Если порт 3003 (HTTP), использовать ws://, иначе wss://
-      const relayProtocol = process.env.RELAY_PROTOCOL || 
-        (relayPort === '3003' || relayHost.includes('localhost') ? 'ws' : 'wss');
-      const relayEndpoint = `${relayProtocol}://${relayHost}:${relayPort}/relay/${sessionId}`;
+      
+      // Create relay session if RelayService is available
+      let relayEndpoint: string;
+      if (this.relayService) {
+        try {
+          const relaySession = await this.relayService.createRelaySession(
+            targetNode.nodeId,
+            request.clientId,
+            selectedRoute.id,
+            3600 // 1 hour TTL
+          );
+          relayEndpoint = relaySession.relayEndpoint;
+          // Use the sessionId from relay session
+          const sessionIdFromRelay = relaySession.sessionId;
+          // Update sessionId if different
+          if (sessionIdFromRelay !== sessionId) {
+            // Use the sessionId from relay
+            // sessionId is already set from relaySession
+          }
+        } catch (error) {
+          logger.warn('Failed to create relay session, using fallback', { error });
+          // Fallback to manual endpoint construction
+          const relayHost = process.env.RELAY_HOST || 
+            process.env.WIREGUARD_SERVER_HOST || 
+            (process.env.PORT === '3003' ? 'mail.s0me.uk' : 'localhost');
+          const relayPort = process.env.RELAY_PORT || process.env.PORT || '3000';
+          const relayProtocol = process.env.RELAY_PROTOCOL || 
+            (relayPort === '3003' || relayHost.includes('localhost') ? 'ws' : 'wss');
+          relayEndpoint = `${relayProtocol}://${relayHost}:${relayPort}/relay/${sessionId}`;
+        }
+      } else {
+        // Fallback if RelayService is not available
+        const relayHost = process.env.RELAY_HOST || 
+          process.env.WIREGUARD_SERVER_HOST || 
+          (process.env.PORT === '3003' ? 'mail.s0me.uk' : 'localhost');
+        const relayPort = process.env.RELAY_PORT || process.env.PORT || '3000';
+        const relayProtocol = process.env.RELAY_PROTOCOL || 
+          (relayPort === '3003' || relayHost.includes('localhost') ? 'ws' : 'wss');
+        relayEndpoint = `${relayProtocol}://${relayHost}:${relayPort}/relay/${sessionId}`;
+      }
 
       // Store route in database with client info
       await this.storeRoute(selectedRoute, expiresAt, request.clientId, request.clientNetworkInfo, request.requirements);

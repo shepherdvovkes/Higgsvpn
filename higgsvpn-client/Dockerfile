@@ -32,8 +32,9 @@ RUN addgroup -S higgsvpn || true && \
     adduser -S -G higgsvpn higgsvpn || true && \
     chown -R higgsvpn:higgsvpn /app || chown -R $(id -u):$(id -g) /app
 
-# Переключаемся на пользователя higgsvpn
-USER higgsvpn
+# Для WireGuard нужны права root или NET_ADMIN capability
+# Оставляем запуск от root, но ограничиваем права через capabilities
+# USER higgsvpn
 
 # Открываем порт для WireGuard (если нужен)
 # EXPOSE 51821/udp

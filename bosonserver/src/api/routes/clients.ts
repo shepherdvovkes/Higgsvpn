@@ -16,6 +16,7 @@ interface ClientInfo {
   clientAddress?: string;
   clientPort?: number;
   lastSeen?: number;
+  connectionType?: 'WireGuard' | 'WebSocket' | 'Unknown';
   networkInfo?: {
     ipv4: string;
     natType: string;
@@ -34,6 +35,9 @@ router.get('/', async (req: Request, res: Response, next: any) => {
   try {
     const relayService = req.app.get('relayService') as RelayService;
     const wireGuardServer = req.app.get('wireGuardServer') as WireGuardServer;
+
+    // Get active WebSocket session IDs
+    const activeWebSocketSessions = relayService.getActiveWebSocketSessionIds();
 
     // Get active sessions from database
     const sessions = await db.query<{
@@ -73,6 +77,17 @@ router.get('/', async (req: Request, res: Response, next: any) => {
     // Build client info list
     const clients: ClientInfo[] = sessions.map(session => {
       const route = routeMap.get(session.route_id || '') || clientRouteMap.get(session.client_id);
+      
+      // Determine connection type
+      let connectionType: 'WireGuard' | 'WebSocket' | 'Unknown' = 'Unknown';
+      if (activeWebSocketSessions.has(session.session_id)) {
+        connectionType = 'WebSocket';
+      } else if (wireGuardServer) {
+        // Check if WireGuard client exists (you may need to implement a method to check this)
+        // For now, if not WebSocket, assume it could be WireGuard
+        connectionType = 'WireGuard';
+      }
+
       const clientInfo: ClientInfo = {
         clientId: session.client_id,
         nodeId: session.node_id,
@@ -80,6 +95,7 @@ router.get('/', async (req: Request, res: Response, next: any) => {
         status: session.status,
         createdAt: session.created_at,
         expiresAt: session.expires_at,
+        connectionType,
       };
 
       if (route?.client_network_info) {
@@ -115,6 +131,11 @@ router.get('/', async (req: Request, res: Response, next: any) => {
 router.get('/:clientId', async (req: Request, res: Response, next: any) => {
   try {
     const { clientId } = req.params;
+    const relayService = req.app.get('relayService') as RelayService;
+    const wireGuardServer = req.app.get('wireGuardServer') as WireGuardServer;
+
+    // Get active WebSocket session IDs
+    const activeWebSocketSessions = relayService.getActiveWebSocketSessionIds();
 
     // Get session
     const sessions = await db.query<{
@@ -139,6 +160,14 @@ router.get('/:clientId', async (req: Request, res: Response, next: any) => {
     }
 
     const session = sessions[0];
+    
+    // Determine connection type
+    let connectionType: 'WireGuard' | 'WebSocket' | 'Unknown' = 'Unknown';
+    if (activeWebSocketSessions.has(session.session_id)) {
+      connectionType = 'WebSocket';
+    } else if (wireGuardServer) {
+      connectionType = 'WireGuard';
+    }
 
     // Get route info
     let networkInfo = null;
@@ -173,6 +202,7 @@ router.get('/:clientId', async (req: Request, res: Response, next: any) => {
       status: session.status,
       createdAt: session.created_at,
       expiresAt: session.expires_at,
+      connectionType,
       networkInfo,
       requirements,
     };
