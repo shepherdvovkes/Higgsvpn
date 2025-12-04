@@ -10,7 +10,6 @@ import { apiRateLimiter, dashboardRateLimiter, nodeRateLimiter } from './middlew
 // Routes
 import nodesRouter from './routes/nodes';
 import clientsRouter from './routes/clients';
-import clientsRouter from './routes/clients';
 import routingRouter from './routes/routing';
 import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
