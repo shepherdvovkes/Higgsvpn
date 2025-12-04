@@ -161,7 +161,32 @@ export class WireGuardServer extends EventEmitter {
       clientId,
       lastSeen: Date.now(),
     });
-    logger.info('Client session registered', { clientId, nodeId, clientKey });
+    logger.info('WireGuard client session registered', { clientId, nodeId, clientKey });
+  }
+
+  getClientSession(clientId: string): { nodeId: string; clientId: string; address: string; port: number } | null {
+    for (const [key, session] of this.clientSessions.entries()) {
+      if (session.clientId === clientId) {
+        const [address, port] = key.split(':');
+        return {
+          ...session,
+          address,
+          port: parseInt(port, 10),
+        };
+      }
+    }
+    return null;
+  }
+
+  async sendPacketToClientById(clientId: string, packet: Buffer): Promise<boolean> {
+    const session = this.getClientSession(clientId);
+    if (!session) {
+      logger.debug('WireGuard client session not found', { clientId });
+      return false;
+    }
+
+    await this.sendPacketToClient(session.address, session.port, packet);
+    return true;
   }
 
   async sendPacketToClient(

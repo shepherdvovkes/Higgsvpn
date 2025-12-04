@@ -245,6 +245,55 @@ Authorization: Bearer <sessionToken>
 
 Получение информации о маршруте.
 
+### WireGuard API
+
+#### POST /api/v1/wireguard/register
+
+Регистрация WireGuard клиента для обработки входящих UDP пакетов.
+
+**Request:**
+```json
+{
+  "clientId": "550e8400-e29b-41d4-a716-446655440001",
+  "nodeId": "550e8400-e29b-41d4-a716-446655440000",
+  "sessionId": "550e8400-e29b-41d4-a716-446655440002",
+  "clientAddress": "192.168.1.2",
+  "clientPort": 51820
+}
+```
+
+**Response:**
+```json
+{
+  "status": "registered",
+  "clientId": "550e8400-e29b-41d4-a716-446655440001",
+  "nodeId": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "WireGuard client registered successfully"
+}
+```
+
+**Примечание:** Этот endpoint используется для регистрации клиентов, которые подключаются напрямую через WireGuard UDP (порт 51820), в отличие от WebSocket соединений через `/relay/{sessionId}`.
+
+#### POST /api/v1/wireguard/unregister
+
+Отмена регистрации WireGuard клиента.
+
+**Request:**
+```json
+{
+  "clientAddress": "192.168.1.2",
+  "clientPort": 51820
+}
+```
+
+**Response:**
+```json
+{
+  "status": "unregistered",
+  "message": "WireGuard client unregistered"
+}
+```
+
 ### Metrics API
 
 #### POST /api/v1/metrics

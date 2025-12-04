@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  wireguard-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wireguard-client
+    restart: unless-stopped
+    # Привилегии для работы с сетью и WireGuard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    # Доступ к сетевому устройству TUN
+    devices:
+      - /dev/net/tun
+    # Сетевая конфигурация
+    network_mode: bridge
+    # Монтирование конфигурации WireGuard (опционально)
+    volumes:
+      - ./config:/etc/wireguard
+      - ./logs:/var/log
+    # Переменные окружения
+    environment:
+      - TZ=Europe/Moscow
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

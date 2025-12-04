@@ -15,6 +15,7 @@ import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
 import healthRouter from './routes/health';
 import packetsRouter from './routes/packets';
+import wireguardRouter from './routes/wireguard';
 
 // Services
 import { DiscoveryService } from '../services/discovery/DiscoveryService';
@@ -154,6 +155,8 @@ export class ApiGateway {
     this.app.use('/api/v1/routing', nodeRateLimiter, routingRouter);
     this.app.use('/api/v1/turn', turnRouter);
     this.app.use('/api/v1/packets', packetsRouter);
+    // WireGuard endpoint for registering WireGuard clients
+    this.app.use('/api/v1/wireguard', nodeRateLimiter, wireguardRouter);
 
     // Prometheus metrics endpoint
     this.app.get('/metrics', async (req: Request, res: Response, next: NextFunction) => {

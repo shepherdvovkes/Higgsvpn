@@ -34,13 +34,39 @@ router.post('/', async (req: Request, res: Response, next: any) => {
     if (validatedData.sessionId) {
       const session = await relayService.getSession(validatedData.sessionId);
       if (session) {
-        // Send packet to client via WireGuard UDP
-        // Client address should be stored in session or retrieved from routing
-        // For now, we'll use WebSocket relay if available
+        // Try to send via WebSocket relay first (for higgsvpn-client)
         const sent = await relayService.sendToSession(validatedData.sessionId, packet);
         if (!sent) {
-          logger.warn('Failed to send packet to client via relay', { sessionId: validatedData.sessionId });
+          // If WebSocket relay failed, try WireGuard UDP if client is registered
+          const wgSent = await wireGuardServer.sendPacketToClientById(validatedData.clientId, packet);
+          if (!wgSent) {
+            logger.warn('Failed to send packet to client via both WebSocket and WireGuard', { 
+              sessionId: validatedData.sessionId,
+              clientId: validatedData.clientId,
+            });
+          } else {
+            logger.debug('Packet sent to client via WireGuard UDP', {
+              clientId: validatedData.clientId,
+            });
+          }
         }
+      } else {
+        // No session found, try direct WireGuard UDP by clientId
+        const wgSent = await wireGuardServer.sendPacketToClientById(validatedData.clientId, packet);
+        if (!wgSent) {
+          logger.warn('Failed to send packet to client: no session and no WireGuard registration', {
+            clientId: validatedData.clientId,
+            sessionId: validatedData.sessionId,
+          });
+        }
+      }
+    } else if (validatedData.clientId) {
+      // No sessionId, try direct WireGuard UDP by clientId
+      const wgSent = await wireGuardServer.sendPacketToClientById(validatedData.clientId, packet);
+      if (!wgSent) {
+        logger.warn('Failed to send packet to client: no WireGuard registration', {
+          clientId: validatedData.clientId,
+        });
       }
     }
 
