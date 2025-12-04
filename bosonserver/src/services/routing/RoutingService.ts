@@ -25,11 +25,16 @@ export interface RoutingResponse {
     relayEndpoint: string;
     nodeEndpoint: {
       nodeId: string;
-      wireguardConfig?: any;
       directConnection: boolean;
     };
     sessionToken: string;
     expiresAt: number;
+    wireguardConfig?: {
+      serverPublicKey: string;
+      serverEndpoint: string;
+      serverPort?: number;
+      allowedIPs?: string;
+    };
   };
 }
 
@@ -81,10 +86,31 @@ export class RoutingService {
       // Generate session token and endpoint
       const sessionId = uuidv4();
       const expiresAt = Date.now() + 3600 * 1000; // 1 hour
-      const relayEndpoint = `wss://${process.env.RELAY_HOST || 'localhost'}:${process.env.RELAY_PORT || '3000'}/relay/${sessionId}`;
+      // Использовать правильный хост для relay endpoint
+      const relayHost = process.env.RELAY_HOST || 
+        process.env.WIREGUARD_SERVER_HOST || 
+        (process.env.PORT === '3003' ? 'mail.s0me.uk' : 'localhost');
+      const relayPort = process.env.RELAY_PORT || process.env.PORT || '3000';
+      // Использовать ws:// для HTTP или wss:// для HTTPS
+      // Если порт 3003 (HTTP), использовать ws://, иначе wss://
+      const relayProtocol = process.env.RELAY_PROTOCOL || 
+        (relayPort === '3003' || relayHost.includes('localhost') ? 'ws' : 'wss');
+      const relayEndpoint = `${relayProtocol}://${relayHost}:${relayPort}/relay/${sessionId}`;
 
       // Store route in database with client info
       await this.storeRoute(selectedRoute, expiresAt, request.clientId, request.clientNetworkInfo, request.requirements);
+
+      // Get WireGuard server configuration
+      // Bosonserver работает как WireGuard сервер, клиент подключается к нему через WireGuard UDP
+      const wireGuardServerHost = process.env.WIREGUARD_SERVER_HOST || 
+        process.env.RELAY_HOST || 
+        'localhost';
+      const wireGuardServerPort = parseInt(process.env.WIREGUARD_PORT || '51820', 10);
+      
+      // Получить публичный ключ сервера (если есть) или использовать placeholder
+      // В реальной реализации нужно генерировать и хранить ключи сервера
+      const wireGuardServerPublicKey = process.env.WIREGUARD_SERVER_PUBLIC_KEY || 
+        'SERVER_PUBLIC_KEY_PLACEHOLDER'; // TODO: Реализовать генерацию ключей
 
       // Create response
       const response: RoutingResponse = {
@@ -98,6 +124,12 @@ export class RoutingService {
           },
           sessionToken: sessionId, // In production, use JWT
           expiresAt,
+          wireguardConfig: {
+            serverPublicKey: wireGuardServerPublicKey,
+            serverEndpoint: `${wireGuardServerHost}:${wireGuardServerPort}`,
+            serverPort: wireGuardServerPort,
+            allowedIPs: '0.0.0.0/0', // Разрешить весь трафик через VPN
+          },
         },
       };
 

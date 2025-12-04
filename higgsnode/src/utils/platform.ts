@@ -45,6 +45,7 @@ export function getWireGuardPaths(): WireGuardPaths {
     // Try to find wg in common locations
     let wgPath = '/usr/local/bin/wg';
     let wgQuickPath = '/usr/local/bin/wg-quick';
+    let configDir = '/usr/local/etc/wireguard';
     
     try {
       // Check if homebrew version exists
@@ -53,6 +54,13 @@ export function getWireGuardPaths(): WireGuardPaths {
       const wgQuickWhich = execSync('which wg-quick', { encoding: 'utf-8' }).trim();
       wgPath = wgWhich;
       wgQuickPath = wgQuickWhich;
+      
+      // Determine config directory based on where wg is installed
+      if (wgWhich.includes('/opt/homebrew')) {
+        configDir = '/opt/homebrew/etc/wireguard';
+      } else if (wgWhich.includes('/usr/local')) {
+        configDir = '/usr/local/etc/wireguard';
+      }
     } catch {
       // Fallback to default paths
     }
@@ -60,7 +68,7 @@ export function getWireGuardPaths(): WireGuardPaths {
     return {
       wg: wgPath,
       wgQuick: wgQuickPath,
-      configDir: '/usr/local/etc/wireguard',
+      configDir: configDir,
     };
   } else {
     // Linux: WireGuard tools are typically in /usr/bin

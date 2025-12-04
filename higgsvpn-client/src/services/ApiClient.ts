@@ -38,6 +38,12 @@ export interface RouteResponse {
     };
     sessionToken: string;
     expiresAt: number;
+    wireguardConfig?: {
+      serverPublicKey: string;
+      serverEndpoint: string;
+      serverPort?: number;
+      allowedIPs?: string;
+    };
   };
 }
 

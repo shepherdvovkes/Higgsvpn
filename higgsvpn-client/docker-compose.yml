@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  higgsvpn-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: higgsvpn-client
+    restart: unless-stopped
+    # Привилегии для работы с сетью и WireGuard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    # Доступ к сетевому устройству TUN
+    devices:
+      - /dev/net/tun
+    # Сетевая конфигурация
+    network_mode: host
+    # Переменные окружения
+    environment:
+      - BOSONSERVER_URL=${BOSONSERVER_URL:-http://mail.s0me.uk:3003}
+      - CLIENT_ID=${CLIENT_ID:-}
+      - WG_INTERFACE=${WG_INTERFACE:-higgsvpn0}
+      - WG_ADDRESS=${WG_ADDRESS:-10.0.0.2/24}
+      - WG_PORT=${WG_PORT:-51821}
+      - RECONNECT_INTERVAL=${RECONNECT_INTERVAL:-5000}
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    # Монтирование для сохранения конфигурации (опционально)
+    volumes:
+      - ./logs:/app/logs
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

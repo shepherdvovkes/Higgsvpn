@@ -57,11 +57,14 @@ export class WireGuardManager extends EventEmitter {
     super();
     this.interfaceName = config.wireguard.interfaceName;
     this.paths = getWireGuardPaths();
+    // Use standard WireGuard config directory for wg-quick compatibility
     // On Windows, WireGuard config files must be in %APPDATA%\WireGuard\
+    // On Linux/macOS, wg-quick expects configs in standard directories
     if (isWindows()) {
       this.configPath = path.join(this.paths.configDir, `${this.interfaceName}.conf`);
     } else {
-      this.configPath = getConfigFilePath(`${this.interfaceName}.conf`);
+      // Use standard WireGuard config directory (wg-quick requirement)
+      this.configPath = path.join(this.paths.configDir, `${this.interfaceName}.conf`);
     }
     this.mtuManager = new MTUManager();
   }

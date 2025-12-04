@@ -4,6 +4,7 @@ import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { ApiClient, RouteRequest, RouteResponse } from './ApiClient';
 import { WebSocketRelay } from './WebSocketRelay';
+import { WireGuardManager } from './WireGuardManager';
 import { ClientError, ConnectionError, RouteError } from '../utils/errors';
 import { getLocalIPv4 } from '../utils/network';
 
@@ -18,6 +19,7 @@ export interface ClientStatus {
 export class ClientService extends EventEmitter {
   private apiClient: ApiClient;
   private relay: WebSocketRelay | null = null;
+  private wireGuardManager: WireGuardManager;
   private clientId: string;
   private status: ClientStatus = { connected: false };
   private isConnecting = false;
@@ -26,6 +28,7 @@ export class ClientService extends EventEmitter {
     super();
     this.clientId = clientId || config.clientId || uuidv4();
     this.apiClient = new ApiClient();
+    this.wireGuardManager = new WireGuardManager();
   }
 
   async connect(requirements?: RouteRequest['requirements']): Promise<void> {
@@ -69,7 +72,23 @@ export class ClientService extends EventEmitter {
       const routeResponse = await this.apiClient.requestRoute(routeRequest);
       this.handleRouteResponse(routeResponse);
 
-      // 4. Connect to WebSocket relay
+      // 4. Setup WireGuard interface
+      // Клиент подключается к bosonserver через WireGuard UDP
+      // Bosonserver ретранслирует пакеты через WebSocket к ноде
+      if (routeResponse.selectedRoute.wireguardConfig) {
+        logger.info('Setting up WireGuard interface');
+        try {
+          await this.setupWireGuard(routeResponse.selectedRoute.wireguardConfig);
+          logger.info('WireGuard interface setup completed');
+        } catch (error) {
+          logger.error('Failed to setup WireGuard interface', { error });
+          // Продолжаем без WireGuard, используем только WebSocket
+        }
+      } else {
+        logger.warn('No WireGuard config in route response, using WebSocket only');
+      }
+
+      // 5. Connect to WebSocket relay (для обратной совместимости и fallback)
       logger.info('Connecting to WebSocket relay');
       this.relay = new WebSocketRelay(
         routeResponse.selectedRoute.relayEndpoint,
@@ -79,9 +98,17 @@ export class ClientService extends EventEmitter {
       );
 
       this.setupRelayHandlers();
-      await this.relay.connect();
+      try {
+        await this.relay.connect();
+      } catch (error) {
+        logger.warn('WebSocket relay connection failed, continuing with WireGuard only', { error });
+        // Если WireGuard настроен, продолжаем без WebSocket
+        if (!routeResponse.selectedRoute.wireguardConfig) {
+          throw error;
+        }
+      }
 
-      // 5. Update status
+      // 6. Update status
       this.status.connected = true;
       this.isConnecting = false;
       this.emit('connected', this.status);
@@ -108,6 +135,49 @@ export class ClientService extends EventEmitter {
       nodeId: this.status.nodeId,
       relayEndpoint: this.status.relayEndpoint,
     });
+  }
+
+  /**
+   * Настраивает WireGuard интерфейс для подключения к bosonserver
+   */
+  private async setupWireGuard(wireguardConfig: any): Promise<void> {
+    try {
+      // Загрузить или сгенерировать ключи клиента
+      await this.wireGuardManager.loadOrGenerateKeyPair();
+      const clientPublicKey = this.wireGuardManager.getPublicKey();
+      const clientPrivateKey = this.wireGuardManager.getPrivateKey();
+
+      if (!clientPublicKey || !clientPrivateKey) {
+        throw new Error('Failed to get WireGuard keys');
+      }
+
+      // Получить конфигурацию сервера из route response или использовать значения по умолчанию
+      const serverPublicKey = wireguardConfig.serverPublicKey || wireguardConfig.publicKey;
+      // Использовать hostname из config.serverUrl
+      const serverHost = new URL(config.serverUrl).hostname;
+      const serverPort = wireguardConfig.serverPort || 51820;
+      const serverEndpoint = wireguardConfig.serverEndpoint || `${serverHost}:${serverPort}`;
+      const allowedIPs = wireguardConfig.allowedIPs || '0.0.0.0/0';
+
+      // Создать WireGuard интерфейс
+      await this.wireGuardManager.createInterface({
+        privateKey: clientPrivateKey,
+        publicKey: clientPublicKey,
+        serverPublicKey,
+        serverEndpoint,
+        allowedIPs,
+        address: config.wireguard.address,
+      });
+
+      logger.info('WireGuard interface created', {
+        interface: config.wireguard.interfaceName,
+        serverEndpoint,
+      });
+    } catch (error) {
+      logger.error('Failed to setup WireGuard interface', { error });
+      // Не прерываем подключение, продолжаем через WebSocket
+      throw error;
+    }
   }
 
   private setupRelayHandlers(): void {
@@ -143,6 +213,13 @@ export class ClientService extends EventEmitter {
     }
 
     logger.info('Disconnecting client');
+
+    // Удалить WireGuard интерфейс
+    try {
+      await this.wireGuardManager.removeInterface();
+    } catch (error) {
+      logger.warn('Failed to remove WireGuard interface', { error });
+    }
 
     if (this.relay) {
       this.relay.disconnect();

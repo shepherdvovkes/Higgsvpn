@@ -101,8 +101,15 @@ export class NodeService {
       // Send metrics to server
       try {
         await this.metricsCollector.sendMetrics(this.nodeId, metrics);
-      } catch (error) {
-        logger.error('Failed to send metrics', { error });
+      } catch (error: any) {
+        // Don't log 429 errors as errors - they're rate limiting, not failures
+        if (error?.statusCode === 429) {
+          logger.debug('Metrics send rate limited, will retry on next collection', { 
+            nodeId: this.nodeId 
+          });
+        } else {
+          logger.error('Failed to send metrics', { error });
+        }
       }
     });
 
@@ -286,7 +293,24 @@ export class NodeService {
         heartbeatInterval: config.heartbeat.interval,
       };
 
-      await this.connectionManager.register(registerRequest);
+      // Try to register, but don't fail if rate limited (429)
+      // ConnectionManager will handle retries and continue in background
+      try {
+        await this.connectionManager.register(registerRequest);
+      } catch (error: any) {
+        // If it's a rate limit error (429), log warning but continue
+        // ConnectionManager will retry in background
+        if (error?.statusCode === 429 || error?.code === 'NETWORK_ERROR' && error?.statusCode === 429) {
+          logger.warn('Registration rate limited, will retry in background', { 
+            nodeId: this.nodeId,
+            error: error.message 
+          });
+          // Continue startup - ConnectionManager will handle retries
+        } else {
+          // For other errors, throw to stop startup
+          throw error;
+        }
+      }
 
       // 8. Start metrics collection
       this.metricsCollector.start();

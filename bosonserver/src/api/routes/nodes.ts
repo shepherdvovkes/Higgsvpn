@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { DiscoveryService } from '../../services/discovery/DiscoveryService';
 import { logger } from '../../utils/logger';
 import { ValidationError, NotFoundError, UnauthorizedError } from '../../utils/errors';
+import { nodeRateLimiter } from '../middleware/rateLimit';
 
 const router = Router();
 
@@ -75,7 +76,8 @@ function authenticateNode(req: Request, res: Response, next: any): void {
 }
 
 // POST /api/v1/nodes/register
-router.post('/register', async (req: Request, res: Response, next: any) => {
+// Используем nodeRateLimiter - регистрация может происходить при перезапуске ноды
+router.post('/register', nodeRateLimiter, async (req: Request, res: Response, next: any) => {
   try {
     const discoveryService = req.app.get('discoveryService') as DiscoveryService;
     
@@ -93,7 +95,8 @@ router.post('/register', async (req: Request, res: Response, next: any) => {
 });
 
 // POST /api/v1/nodes/:nodeId/heartbeat
-router.post('/:nodeId/heartbeat', authenticateNode, async (req: Request, res: Response, next: any) => {
+// Используем nodeRateLimiter вместо стандартного - heartbeat отправляется часто
+router.post('/:nodeId/heartbeat', nodeRateLimiter, authenticateNode, async (req: Request, res: Response, next: any) => {
   try {
     const discoveryService = req.app.get('discoveryService') as DiscoveryService;
     const { nodeId } = req.params;

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { TurnManager } from '../../services/turn/TurnManager';
 import { logger } from '../../utils/logger';
+import { nodeRateLimiter } from '../middleware/rateLimit';
 
 const router = Router();
 
@@ -19,7 +20,8 @@ router.get('/servers', async (req: Request, res: Response, next: any) => {
 });
 
 // GET /api/v1/turn/stun
-router.get('/stun', async (req: Request, res: Response, next: any) => {
+// Используем nodeRateLimiter - STUN серверы запрашиваются при старте ноды
+router.get('/stun', nodeRateLimiter, async (req: Request, res: Response, next: any) => {
   try {
     const turnManager = req.app.get('turnManager') as TurnManager;
     const servers = await turnManager.getStunServers();

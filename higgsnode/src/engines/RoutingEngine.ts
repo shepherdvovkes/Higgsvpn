@@ -690,18 +690,22 @@ export class RoutingEngine extends EventEmitter {
       // 3. Create pf anchor file for HiggsNode rules
       // macOS uses pfctl with anchor files for dynamic rules
       const anchorFile = '/tmp/higgsnode-pf-anchor.conf';
-      const pfConfig = `
-# HiggsNode NAT rules
+      
+      // Correct pf syntax for macOS: nat on <interface> from <source> to <destination> -> (<interface>)
+      // Using (interface) means use interface's IP automatically
+      // This is the correct syntax for pf on macOS
+      const pfConfig = `# HiggsNode NAT rules
 # Note: WireGuard interface is NOT created - packets come via API
 # This NAT rule is for routing packets from API to physical interface
 
 # Enable NAT from any source to physical interface
+# Using (${physicalInterface}) means use the interface's IP address
 nat on ${physicalInterface} from any to any -> (${physicalInterface})
 `;
 
       // Write anchor file
-      fs.writeFileSync(anchorFile, pfConfig.trim());
-      logger.debug('pf anchor file created', { anchorFile });
+      fs.writeFileSync(anchorFile, pfConfig);
+      logger.debug('pf anchor file created', { anchorFile, config: pfConfig });
 
       // 4. Load pf rules using anchor
       try {
@@ -713,15 +717,27 @@ nat on ${physicalInterface} from any to any -> (${physicalInterface})
           logger.debug('pf enabled');
         }
 
-        // Load anchor rules
+        // Load anchor rules using -a (anchor) flag without -f to avoid flushing
+        // Use -f only if anchor doesn't exist, otherwise use -Fa to flush anchor first
+        try {
+          // Try to flush anchor first if it exists
+          execSync(`pfctl -a higgsnode -Fa`, { stdio: 'pipe' });
+        } catch {
+          // Anchor doesn't exist yet, that's fine
+        }
+        
+        // Load new rules into anchor
         execSync(`pfctl -a higgsnode -f ${anchorFile}`, { stdio: 'pipe' });
         this.natRules.push(`pfctl -a higgsnode -f ${anchorFile}`);
         logger.debug('pf anchor rules loaded', { anchorFile });
       } catch (pfError: any) {
-        logger.warn('Failed to load pf rules (may require root)', { error: pfError });
-        // Try alternative: add rules directly to main pf config
-        // This is less ideal but may work if anchor doesn't
-        logger.debug('Trying alternative pf configuration method');
+        logger.warn('Failed to load pf rules (may require root or pf not configured)', { 
+          error: pfError?.message || pfError,
+          stderr: pfError?.stderr?.toString() 
+        });
+        // NAT через pf не критичен - пакеты все равно будут роутиться через default route
+        // macOS может использовать другие механизмы роутинга
+        logger.info('Continuing without pf NAT rules - packets will use default routing');
       }
 
       logger.info('macOS NAT enabled successfully', {

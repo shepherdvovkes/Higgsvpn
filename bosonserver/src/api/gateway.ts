@@ -5,7 +5,7 @@ import axios from 'axios';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { errorHandler } from '../utils/errors';
-import { apiRateLimiter, dashboardRateLimiter } from './middleware/rateLimit';
+import { apiRateLimiter, dashboardRateLimiter, nodeRateLimiter } from './middleware/rateLimit';
 
 // Routes
 import nodesRouter from './routes/nodes';
@@ -145,10 +145,12 @@ export class ApiGateway {
     // Read-only dashboard endpoints get more lenient rate limiting
     this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
     this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
-    this.app.use('/api/v1/metrics', dashboardRateLimiter, metricsRouter);
     
-    // Write endpoints use standard rate limiting
-    this.app.use('/api/v1/routing', routingRouter);
+    // Metrics and heartbeat endpoints use nodeRateLimiter (more lenient for frequent updates)
+    this.app.use('/api/v1/metrics', nodeRateLimiter, metricsRouter);
+    
+    // Routing endpoint uses nodeRateLimiter (clients may retry frequently)
+    this.app.use('/api/v1/routing', nodeRateLimiter, routingRouter);
     this.app.use('/api/v1/turn', turnRouter);
     this.app.use('/api/v1/packets', packetsRouter);
 

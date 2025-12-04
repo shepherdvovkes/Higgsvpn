@@ -36,13 +36,19 @@ export class NatTraversalEngine extends EventEmitter {
       const servers = await this.apiClient.getStunServers();
       this.stunServers = servers;
       logger.info('STUN servers loaded', { count: servers.length });
-    } catch (error) {
-      logger.error('Failed to load STUN servers', { error });
+    } catch (error: any) {
+      // Don't log as error if it's rate limiting (429) - it's expected
+      if (error?.statusCode === 429 || (error?.code === 'NETWORK_ERROR' && error?.statusCode === 429)) {
+        logger.debug('STUN servers request rate limited, using fallback', { error: error.message });
+      } else {
+        logger.warn('Failed to load STUN servers from bosonserver, using fallback', { error: error.message });
+      }
       // Use fallback STUN servers
       this.stunServers = [
         { host: 'stun.l.google.com', port: 19302 },
         { host: 'stun1.l.google.com', port: 19302 },
       ];
+      logger.info('Using fallback STUN servers', { count: this.stunServers.length });
     }
   }
 

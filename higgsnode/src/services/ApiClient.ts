@@ -232,8 +232,13 @@ export class ApiClient {
   async sendMetrics(data: MetricsRequest): Promise<void> {
     try {
       await this.client.post('/api/v1/metrics', data);
-    } catch (error) {
-      logger.error('Failed to send metrics', { error, nodeId: data.nodeId });
+    } catch (error: any) {
+      // Don't log 429 as error - it's rate limiting, expected behavior
+      if (error?.statusCode === 429) {
+        logger.debug('Metrics send rate limited', { nodeId: data.nodeId });
+      } else {
+        logger.error('Failed to send metrics', { error, nodeId: data.nodeId });
+      }
       throw error;
     }
   }
@@ -296,12 +301,25 @@ export class ApiClient {
         return await fn();
       } catch (error) {
         lastError = error as Error;
+        
+        // Check if it's a rate limit error (429)
+        const isRateLimit = (error as any)?.statusCode === 429;
+        
         if (i < attempts - 1) {
-          const waitTime = delay * Math.pow(2, i); // Exponential backoff
+          // For rate limit errors, use longer backoff
+          let waitTime: number;
+          if (isRateLimit) {
+            // Exponential backoff with minimum 5 seconds for rate limits
+            waitTime = Math.max(5000, delay * Math.pow(2, i + 2));
+          } else {
+            waitTime = delay * Math.pow(2, i); // Standard exponential backoff
+          }
+          
           logger.warn(`Request failed, retrying in ${waitTime}ms...`, {
             attempt: i + 1,
             attempts,
             error: lastError.message,
+            isRateLimit,
           });
           await new Promise((resolve) => setTimeout(resolve, waitTime));
         }
