@@ -89,7 +89,7 @@ export class RoutingService {
       }
 
       // Generate session token and endpoint
-      const sessionId = uuidv4();
+      let sessionId = uuidv4();
       const expiresAt = Date.now() + 3600 * 1000; // 1 hour
       
       // Create relay session if RelayService is available
@@ -103,13 +103,8 @@ export class RoutingService {
             3600 // 1 hour TTL
           );
           relayEndpoint = relaySession.relayEndpoint;
-          // Use the sessionId from relay session
-          const sessionIdFromRelay = relaySession.sessionId;
-          // Update sessionId if different
-          if (sessionIdFromRelay !== sessionId) {
-            // Use the sessionId from relay
-            // sessionId is already set from relaySession
-          }
+          // Use the sessionId from relay session (it may differ from the locally generated one)
+          sessionId = relaySession.sessionId;
         } catch (error) {
           logger.warn('Failed to create relay session, using fallback', { error });
           // Fallback to manual endpoint construction
@@ -272,4 +267,3 @@ export class RoutingService {
     };
   }
 }
-

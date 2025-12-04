@@ -10,6 +10,7 @@ import { apiRateLimiter, dashboardRateLimiter, nodeRateLimiter } from './middlew
 // Routes
 import nodesRouter from './routes/nodes';
 import clientsRouter from './routes/clients';
+import clientsRouter from './routes/clients';
 import routingRouter from './routes/routing';
 import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
@@ -143,9 +144,9 @@ export class ApiGateway {
     this.app.use('/health', healthRouter);
 
     // API routes with rate limiting
-    // Read-only dashboard endpoints get more lenient rate limiting
-    this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
-    this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
+        // Read-only dashboard endpoints get more lenient rate limiting
+        this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
+        this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
     
     // Metrics and heartbeat endpoints use nodeRateLimiter (more lenient for frequent updates)
     this.app.use('/api/v1/metrics', nodeRateLimiter, metricsRouter);
@@ -226,4 +227,3 @@ export class ApiGateway {
     }
   }
 }
-
