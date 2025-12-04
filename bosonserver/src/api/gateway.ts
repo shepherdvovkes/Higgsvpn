@@ -5,7 +5,7 @@ import axios from 'axios';
 import { config } from '../config/config';
 import { logger } from '../utils/logger';
 import { errorHandler } from '../utils/errors';
-import { apiRateLimiter, dashboardRateLimiter, nodeRateLimiter } from './middleware/rateLimit';
+import { apiRateLimiter } from './middleware/rateLimit';
 
 // Routes
 import nodesRouter from './routes/nodes';
@@ -14,7 +14,6 @@ import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
 import healthRouter from './routes/health';
 import packetsRouter from './routes/packets';
-import clientsRouter from './routes/clients';
 
 // Services
 import { DiscoveryService } from '../services/discovery/DiscoveryService';
@@ -82,7 +81,7 @@ export class ApiGateway {
       next();
     });
 
-    // Rate limiting for write operations (applied to routes that don't have specific limiters)
+    // Rate limiting
     this.app.use('/api', apiRateLimiter);
 
     // Make services available to routes
@@ -141,16 +140,10 @@ export class ApiGateway {
     // Health check routes
     this.app.use('/health', healthRouter);
 
-    // API routes with rate limiting
-    // Read-only dashboard endpoints get more lenient rate limiting
-    this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
-    this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
-    
-    // Metrics and heartbeat endpoints use nodeRateLimiter (more lenient for frequent updates)
-    this.app.use('/api/v1/metrics', nodeRateLimiter, metricsRouter);
-    
-    // Routing endpoint uses nodeRateLimiter (clients may retry frequently)
-    this.app.use('/api/v1/routing', nodeRateLimiter, routingRouter);
+    // API routes
+    this.app.use('/api/v1/nodes', nodesRouter);
+    this.app.use('/api/v1/routing', routingRouter);
+    this.app.use('/api/v1/metrics', metricsRouter);
     this.app.use('/api/v1/turn', turnRouter);
     this.app.use('/api/v1/packets', packetsRouter);
 

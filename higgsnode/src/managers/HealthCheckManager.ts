@@ -89,15 +89,12 @@ export class HealthCheckManager extends EventEmitter {
       overall: false,
     };
 
-    // Проверить WireGuard (опционально - нода может работать без интерфейса)
-    // В текущей архитектуре нода получает пакеты через WebSocket от bosonserver
-    // и не требует WireGuard интерфейса
+    // Проверить WireGuard
     try {
       const wgStatus = await this.wireGuardManager.getInterfaceStatus();
       status.wireguard = wgStatus?.status === 'up';
     } catch {
-      // WireGuard интерфейс не обязателен для работы ноды
-      status.wireguard = true; // Считаем OK если интерфейс не нужен
+      status.wireguard = false;
     }
 
     // Проверить NAT
@@ -110,8 +107,8 @@ export class HealthCheckManager extends EventEmitter {
       status.networkRoute = false;
     }
 
-    // Общий статус - WireGuard не обязателен
-    status.overall = status.nat && status.networkRoute;
+    // Общий статус
+    status.overall = status.wireguard && status.nat && status.networkRoute;
 
     return status;
   }
@@ -120,8 +117,13 @@ export class HealthCheckManager extends EventEmitter {
     logger.warn('Attempting automatic recovery', { status });
 
     try {
-      // WireGuard интерфейс не обязателен - нода работает через WebSocket
-      // Не пытаемся восстанавливать WireGuard интерфейс
+      // Восстановить WireGuard если не работает
+      if (!status.wireguard) {
+        logger.info('Recovering WireGuard interface');
+        // Пересоздать интерфейс
+        await this.wireGuardManager.stopInterface();
+        await this.wireGuardManager.createInterface();
+      }
 
       // Восстановить NAT если не работает
       if (!status.nat) {

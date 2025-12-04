@@ -132,23 +132,95 @@ export class PacketForwarder extends EventEmitter {
 
   /**
    * Отправляет raw IP пакет в интернет
-   * На Linux/macOS использует raw socket, на Windows - альтернативный метод
+   * На Linux/macOS использует raw socket, на Windows - альтернативный метод через обычные сокеты
    */
   private async sendRawPacket(packet: Buffer, protocol: number, sessionId: string): Promise<void> {
     try {
-      if (isLinux() || isMacOS()) {
+      if (isWindows()) {
+        // Windows 11: использовать обычные UDP/TCP сокеты (raw socket ограничен на Windows)
+        await this.sendWindowsPacket(packet, sessionId);
+      } else if (isLinux() || isMacOS()) {
         // Linux/macOS: использовать raw socket для отправки IP пакетов
         // Примечание: для raw socket нужны права root
         await this.sendRawSocketPacket(packet, sessionId);
-      } else if (isWindows()) {
-        // Windows: использовать альтернативный метод (например, через WinPcap или npcap)
-        logger.warn('Raw socket on Windows requires additional setup');
-        // Fallback: можно использовать другие методы
       }
     } catch (error) {
       logger.error('Failed to send raw packet', { error });
       throw error;
     }
+  }
+
+  /**
+   * Отправляет пакет на Windows 11 через обычные сокеты (UDP/TCP)
+   * Windows ограничивает raw socket, поэтому используем обычные сокеты
+   */
+  private async sendWindowsPacket(packet: Buffer, sessionId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        // Проверить версию IP
+        const version = (packet[0] >> 4) & 0x0f;
+        if (version !== 4) {
+          logger.debug('Windows: Only IPv4 supported', { version });
+          resolve();
+          return;
+        }
+
+        // Извлечь информацию из IP заголовка
+        const destIP = `${packet[12]}.${packet[13]}.${packet[14]}.${packet[15]}`;
+        const sourceIP = `${packet[16]}.${packet[17]}.${packet[18]}.${packet[19]}`;
+        const protocol = packet[9];
+        const ipHeaderLength = (packet[0] & 0x0f) * 4;
+
+        if (protocol === 17) { // UDP
+          // Извлечь UDP заголовок
+          if (packet.length < ipHeaderLength + 8) {
+            logger.debug('Windows: UDP packet too small', { size: packet.length });
+            resolve();
+            return;
+          }
+
+          const udpHeaderOffset = ipHeaderLength;
+          const destPort = (packet[udpHeaderOffset + 2] << 8) | packet[udpHeaderOffset + 3];
+          const sourcePort = (packet[udpHeaderOffset] << 8) | packet[udpHeaderOffset + 1];
+          const udpPayload = packet.slice(udpHeaderOffset + 8);
+
+          // Создать UDP socket если еще не создан
+          if (!this.rawSocket) {
+            this.rawSocket = createSocket('udp4');
+          }
+
+          // Отправить UDP пакет
+          this.rawSocket.send(udpPayload, destPort, destIP, (error) => {
+            if (error) {
+              logger.error('Windows: Failed to send UDP packet', { error, destIP, destPort });
+              reject(error);
+            } else {
+              logger.debug('Windows: UDP packet sent', { destIP, destPort, size: udpPayload.length });
+              resolve();
+            }
+          });
+        } else if (protocol === 6) { // TCP
+          // TCP требует установления соединения через TCPConnectionManager
+          this.handleTCPPacket(packet, sessionId).then(() => {
+            resolve();
+          }).catch((error) => {
+            logger.error('Windows: TCP packet handling failed', { error });
+            resolve(); // Не прерываем выполнение для других пакетов
+          });
+        } else if (protocol === 1) { // ICMP
+          // ICMP на Windows требует специальной обработки
+          // Для упрощения используем ping через системную утилиту или игнорируем
+          logger.debug('Windows: ICMP packet (not supported via raw socket)', { destIP });
+          resolve();
+        } else {
+          logger.debug('Windows: Unsupported protocol', { protocol, destIP });
+          resolve();
+        }
+      } catch (error) {
+        logger.error('Windows: Failed to send packet', { error });
+        reject(error);
+      }
+    });
   }
 
   /**

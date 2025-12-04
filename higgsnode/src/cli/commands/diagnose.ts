@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { logger } from '../../utils/logger';
 import { execSync } from 'child_process';
-import { checkWireGuardInstalled, getWireGuardPaths, isLinux, isMacOS } from '../../utils/platform';
+import { checkWireGuardInstalled, getWireGuardPaths, isLinux } from '../../utils/platform';
 import { getPhysicalInterface } from '../../utils/networkInterface';
 
 export interface DiagnosticResult {
@@ -144,40 +144,12 @@ async function checkNAT(verbose: boolean): Promise<DiagnosticResult> {
         error: enabled ? undefined : 'IP forwarding not enabled',
         details: { forwarding: enabled },
       };
-    } else if (isMacOS()) {
-      // macOS: проверить IP forwarding
-      try {
-        const forwarding = execSync('sysctl net.inet.ip.forwarding', { encoding: 'utf-8' });
-        const enabled = forwarding.includes('= 1');
-        
-        // Проверить pf (Packet Filter)
-        let pfEnabled = false;
-        try {
-          const pfStatus = execSync('pfctl -s info', { encoding: 'utf-8', stdio: 'pipe' });
-          pfEnabled = pfStatus.includes('Status: Enabled');
-        } catch {
-          // pf может быть не доступен или не включен
-        }
-        
-        return {
-          name: 'NAT',
-          success: enabled,
-          error: enabled ? undefined : 'IP forwarding not enabled',
-          details: { forwarding: enabled, pfEnabled },
-        };
-      } catch (error: any) {
-        return {
-          name: 'NAT',
-          success: false,
-          error: `Failed to check NAT: ${error.message}`,
-        };
-      }
     }
     
     return {
       name: 'NAT',
       success: true,
-      details: { platform: 'Windows or other' },
+      details: { platform: 'not Linux' },
     };
   } catch (error: any) {
     return {
@@ -201,25 +173,6 @@ async function checkRouting(verbose: boolean): Promise<DiagnosticResult> {
         error: hasDefault ? undefined : 'No default route found',
         details: { hasDefaultRoute: hasDefault },
       };
-    } else if (isMacOS()) {
-      // macOS: проверить default route
-      try {
-        const routeOutput = execSync('route -n get default', { encoding: 'utf-8' });
-        const hasDefault = routeOutput.includes('gateway:');
-        
-        return {
-          name: 'Routing',
-          success: hasDefault,
-          error: hasDefault ? undefined : 'No default route found',
-          details: { hasDefaultRoute: hasDefault },
-        };
-      } catch (error: any) {
-        return {
-          name: 'Routing',
-          success: false,
-          error: `Failed to check routing: ${error.message}`,
-        };
-      }
     }
     
     return {
@@ -245,25 +198,6 @@ async function checkFirewall(verbose: boolean): Promise<DiagnosticResult> {
         success: true,
         details: { iptables: 'accessible' },
       };
-    } else if (isMacOS()) {
-      // macOS: проверить pf (Packet Filter)
-      try {
-        const pfStatus = execSync('pfctl -s info', { encoding: 'utf-8', stdio: 'pipe' });
-        const pfEnabled = pfStatus.includes('Status: Enabled');
-        
-        return {
-          name: 'Firewall',
-          success: true,
-          details: { pf: pfEnabled ? 'enabled' : 'disabled' },
-        };
-      } catch (error: any) {
-        // pf может быть не доступен, это не критично
-        return {
-          name: 'Firewall',
-          success: true,
-          details: { pf: 'not accessible (may require root)' },
-        };
-      }
     }
     
     return {
