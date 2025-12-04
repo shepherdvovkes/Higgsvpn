@@ -33,7 +33,7 @@ export class WebSocketRelay extends EventEmitter {
   private reconnectAttempts = 0;
   private isConnected = false;
   private heartbeatInterval = 30000; // 30 seconds
-  private packetBuffer: Buffer[] = [];
+  private packetBuffer: Array<{ packet: Buffer; sessionId?: string }> = [];
   private batchTimer: NodeJS.Timeout | null = null;
   private readonly BATCH_SIZE = 10; // Количество пакетов в батче
   private readonly BATCH_TIMEOUT = 10; // Таймаут в миллисекундах
@@ -241,16 +241,33 @@ export class WebSocketRelay extends EventEmitter {
     }
   }
 
-  sendData(data: Buffer, direction: 'client-to-node' | 'node-to-client'): void {
+  sendData(data: Buffer, direction: 'client-to-node' | 'node-to-client', targetSessionId?: string): void {
     if (!this.isConnected || !this.ws) {
       throw new NetworkError('WebSocket not connected');
     }
 
+    // Использовать переданный sessionId или дефолтный из options
+    const sessionId = targetSessionId || this.options.sessionId;
+
     // Для бинарных данных (WireGuard пакеты) отправлять напрямую или батчем
     if (Buffer.isBuffer(data)) {
-      // Для маленьких пакетов использовать batching
+      // Если sessionId отличается от дефолтного, отправлять сразу без батчинга
+      // (батчинг работает только для пакетов с одинаковым sessionId)
+      if (targetSessionId && targetSessionId !== this.options.sessionId) {
+        const message: RelayMessage = {
+          type: 'data',
+          sessionId: targetSessionId,
+          direction,
+          payload: data,
+        };
+        this.ws.send(JSON.stringify(message));
+        return;
+      }
+
+      // Для маленьких пакетов использовать batching (только для дефолтного sessionId)
       if (data.length < this.MAX_PACKET_SIZE) {
-        this.packetBuffer.push(data);
+        // Сохранить пакет с sessionId для батча
+        this.packetBuffer.push({ packet: data, sessionId: targetSessionId });
         
         // Отправить батч если достигнут размер или таймаут
         if (this.packetBuffer.length >= this.BATCH_SIZE) {
@@ -270,7 +287,7 @@ export class WebSocketRelay extends EventEmitter {
     // Для control messages использовать JSON
     const message: RelayMessage = {
       type: 'data',
-      sessionId: this.options.sessionId,
+      sessionId,
       direction,
       payload: data,
     };
@@ -283,7 +300,7 @@ export class WebSocketRelay extends EventEmitter {
     }
 
     // Создать батч: [количество пакетов (2 байта)] + [размер пакета 1 (2 байта)] + [данные 1] + ...
-    const packets = this.packetBuffer;
+    const packetEntries = this.packetBuffer;
     this.packetBuffer = [];
 
     if (this.batchTimer) {
@@ -293,28 +310,29 @@ export class WebSocketRelay extends EventEmitter {
 
     // Формат батча: [count: uint16] + [size1: uint16][data1] + [size2: uint16][data2] + ...
     let batchSize = 2; // Для счетчика пакетов
-    for (const packet of packets) {
-      batchSize += 2 + packet.length; // Размер + данные
+    for (const entry of packetEntries) {
+      batchSize += 2 + entry.packet.length; // Размер + данные
     }
 
     const batch = Buffer.allocUnsafe(batchSize);
     let offset = 0;
 
     // Записать количество пакетов
-    batch.writeUInt16BE(packets.length, offset);
+    batch.writeUInt16BE(packetEntries.length, offset);
     offset += 2;
 
     // Записать каждый пакет
-    for (const packet of packets) {
-      batch.writeUInt16BE(packet.length, offset);
+    for (const entry of packetEntries) {
+      batch.writeUInt16BE(entry.packet.length, offset);
       offset += 2;
-      packet.copy(batch, offset);
-      offset += packet.length;
+      entry.packet.copy(batch, offset);
+      offset += entry.packet.length;
     }
 
-    // Отправить батч
+    // Отправить батч (все пакеты в батче должны иметь одинаковый sessionId)
+    // Используем дефолтный sessionId из options
     this.ws.send(batch, { binary: true });
-    logger.debug('Packet batch sent', { packetCount: packets.length, batchSize });
+    logger.debug('Packet batch sent', { packetCount: packetEntries.length, batchSize });
   }
 
   sendControl(action: string, payload?: any, compress: boolean = true): void {

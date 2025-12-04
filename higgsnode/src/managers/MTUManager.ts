@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { logger } from '../utils/logger';
 import { getPhysicalInterface } from '../utils/networkInterface';
-import { isWindows, isMacOS } from '../utils/platform';
+import { isWindows } from '../utils/platform';
 
 export class MTUManager {
   private readonly WIREGUARD_OVERHEAD = 80; // WireGuard overhead (encryption + headers)
@@ -57,23 +57,8 @@ export class MTUManager {
           // Если не удалось определить, используем значение по умолчанию
           return this.DEFAULT_MTU;
         }
-      } else if (isMacOS()) {
-        // macOS: использовать ifconfig
-        try {
-          const mtuOutput = execSync(`ifconfig ${physicalInterface.name}`, { encoding: 'utf-8' });
-          const mtuMatch = mtuOutput.match(/mtu (\d+)/);
-          
-          if (!mtuMatch) {
-            return this.DEFAULT_MTU;
-          }
-          
-          physicalMTU = parseInt(mtuMatch[1], 10);
-        } catch (error) {
-          logger.warn('Failed to get MTU via ifconfig, using default', { error });
-          return this.DEFAULT_MTU;
-        }
       } else {
-        // Linux: использовать ip команду
+        // Linux/macOS: использовать ip команду
         const mtuOutput = execSync(`ip link show ${physicalInterface.name}`, { encoding: 'utf-8' });
         const mtuMatch = mtuOutput.match(/mtu (\d+)/);
         
@@ -160,12 +145,8 @@ export class MTUManager {
           logger.debug('Interface not found, skipping MTU setup', { interface: interfaceName });
           return;
         }
-      } else if (isMacOS()) {
-        // macOS: использовать ifconfig
-        execSync(`ifconfig ${interfaceName} mtu ${mtu}`, { stdio: 'pipe' });
-        logger.info('MTU set via ifconfig', { interface: interfaceName, mtu });
       } else {
-        // Linux: использовать ip команду
+        // Linux/macOS: использовать ip команду
         execSync(`ip link set ${interfaceName} mtu ${mtu}`, { stdio: 'pipe' });
         logger.info('MTU set', { interface: interfaceName, mtu });
       }
@@ -189,14 +170,8 @@ export class MTUManager {
               stdio: 'pipe',
               timeout: 2000,
             });
-          } else if (isMacOS()) {
-            // macOS: использовать ping с флагом -D (Don't Fragment) и -s (size)
-            execSync(`ping -D -s ${size - 28} -c 1 ${target}`, {
-              stdio: 'pipe',
-              timeout: 2000,
-            });
           } else {
-            // Linux: использовать ping с флагом -M do (Don't Fragment) и -s (size)
+            // Linux/macOS: использовать ping с флагом -M do (Don't Fragment) и -s (size)
             execSync(`ping -M do -s ${size - 28} -c 1 ${target}`, {
               stdio: 'pipe',
               timeout: 2000,

@@ -35,21 +35,56 @@ export class NetworkRouteManager extends EventEmitter {
         gateway: this.physicalInterface.gateway,
       });
 
-      // Нода работает без WireGuard интерфейса - пакеты идут через WebSocket от bosonserver
-      // Маршрут для WireGuard интерфейса не нужен, используем default route через физический интерфейс
-      // Убедиться, что default route существует и работает
-      const hasDefaultRoute = await this.verifyDefaultRoute();
-      if (!hasDefaultRoute) {
-        logger.warn('Default route not found or invalid');
-      }
+      // Убедиться, что маршрут для WireGuard сети существует
+      await this.ensureWireGuardRoute();
     } catch (error) {
       logger.error('Failed to initialize NetworkRouteManager', { error });
       throw error;
     }
   }
 
-  // Метод ensureWireGuardRoute удален - нода работает без WireGuard интерфейса
-  // Пакеты идут через WebSocket от bosonserver и роутятся через default route
+  private async ensureWireGuardRoute(): Promise<void> {
+    try {
+      if (isLinux()) {
+        // Проверить, существует ли маршрут
+        try {
+          execSync(`ip route show ${this.wireguardSubnet}`, { stdio: 'pipe' });
+          logger.debug('WireGuard route already exists');
+        } catch {
+          // Маршрут не существует, добавить
+          execSync(`ip route add ${this.wireguardSubnet} dev ${this.wireguardInterface}`, {
+            stdio: 'pipe',
+          });
+          logger.info('WireGuard route added', { subnet: this.wireguardSubnet });
+        }
+      } else if (isWindows()) {
+        // Windows routing
+        try {
+          execSync(`route print ${this.wireguardSubnet}`, { stdio: 'pipe' });
+          logger.debug('WireGuard route already exists');
+        } catch {
+          const [ip, mask] = this.wireguardSubnet.split('/');
+          execSync(`route add ${ip} mask ${this.cidrToSubnetMask(mask)} ${this.wireguardInterface}`, {
+            stdio: 'pipe',
+          });
+          logger.info('WireGuard route added', { subnet: this.wireguardSubnet });
+        }
+      } else if (isMacOS()) {
+        // macOS routing
+        try {
+          execSync(`route -n get ${this.wireguardSubnet}`, { stdio: 'pipe' });
+          logger.debug('WireGuard route already exists');
+        } catch {
+          execSync(`route add -net ${this.wireguardSubnet} -interface ${this.wireguardInterface}`, {
+            stdio: 'pipe',
+          });
+          logger.info('WireGuard route added', { subnet: this.wireguardSubnet });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to ensure WireGuard route', { error });
+    }
+  }
 
   private cidrToSubnetMask(cidr: string): string {
     const bits = parseInt(cidr, 10);
@@ -62,24 +97,10 @@ export class NetworkRouteManager extends EventEmitter {
     ].join('.');
   }
 
-  private calculateSubnet(ip: string, mask: string): string {
-    const parts = ip.split('.').map(Number);
-    const maskBits = parseInt(mask, 10);
-    const maskValue = 0xffffffff << (32 - maskBits);
-    
-    const subnetParts = parts.map((part, index) => {
-      const shift = 24 - index * 8;
-      return (maskValue >>> shift) & 0xff & part;
-    });
-
-    return subnetParts.join('.');
-  }
-
   /**
-   * Проверяет default route через физический интерфейс
-   * Нода использует default route для отправки пакетов в интернет
+   * Проверяет, что пакеты из WireGuard сети будут маршрутизироваться через физический интерфейс
    */
-  private async verifyDefaultRoute(): Promise<boolean> {
+  async verifyRouting(): Promise<boolean> {
     if (!this.physicalInterface) {
       return false;
     }
@@ -88,53 +109,27 @@ export class NetworkRouteManager extends EventEmitter {
       if (isLinux()) {
         // Проверить default route
         const routeOutput = execSync('ip route show default', { encoding: 'utf-8' });
-        const hasDefaultRoute = routeOutput.includes(this.physicalInterface.gateway) || 
-                                routeOutput.includes(this.physicalInterface.name);
-        return hasDefaultRoute;
+        const hasDefaultRoute = routeOutput.includes(this.physicalInterface.gateway);
+        
+        // Проверить IP forwarding
+        const forwardingOutput = execSync('sysctl net.ipv4.ip_forward', { encoding: 'utf-8' });
+        const forwardingEnabled = forwardingOutput.includes('= 1');
+
+        return hasDefaultRoute && forwardingEnabled;
       } else if (isWindows()) {
         // Windows routing verification
         const routeOutput = execSync('route print 0.0.0.0', { encoding: 'utf-8' });
         return routeOutput.includes(this.physicalInterface.gateway);
       } else if (isMacOS()) {
-        // macOS routing verification - проверяем default route
-        try {
-          const routeOutput = execSync('route -n get default', { encoding: 'utf-8' });
-          
-          // Проверяем, что default route использует наш физический интерфейс или gateway
-          // Формат вывода: gateway: 192.168.0.1, interface: en0
-          const hasGateway = routeOutput.includes(`gateway: ${this.physicalInterface.gateway}`) ||
-                            routeOutput.includes(`gateway: ${this.physicalInterface.gateway}\n`);
-          const hasInterface = routeOutput.includes(`interface: ${this.physicalInterface.name}`) ||
-                              routeOutput.includes(`interface: ${this.physicalInterface.name}\n`);
-          
-          // Если есть gateway или interface, маршрут существует
-          if (hasGateway || hasInterface) {
-            return true;
-          }
-          
-          // Альтернативная проверка - просто наличие gateway или interface в выводе
-          return routeOutput.includes(this.physicalInterface.gateway) ||
-                 routeOutput.includes(this.physicalInterface.name);
-        } catch (routeError) {
-          // Если команда не работает, считаем что маршрут есть (оптимистично)
-          logger.debug('Failed to verify default route via route command', { error: routeError });
-          return true; // Assume route exists if we can't verify
-        }
+        // macOS routing verification
+        const routeOutput = execSync('route -n get default', { encoding: 'utf-8' });
+        return routeOutput.includes(this.physicalInterface.gateway);
       }
       return false;
     } catch (error) {
-      logger.error('Failed to verify default route', { error });
-      // Оптимистично считаем что маршрут есть, если не можем проверить
-      return true;
+      logger.error('Failed to verify routing', { error });
+      return false;
     }
-  }
-
-  /**
-   * Проверяет, что пакеты могут маршрутизироваться через физический интерфейс
-   * Нода использует default route для отправки пакетов в интернет
-   */
-  async verifyRouting(): Promise<boolean> {
-    return await this.verifyDefaultRoute();
   }
 
   /**

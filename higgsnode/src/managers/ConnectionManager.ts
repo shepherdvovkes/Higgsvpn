@@ -78,111 +78,13 @@ export class ConnectionManager extends EventEmitter {
 
       logger.info('Node registered successfully', { nodeId: response.nodeId });
       return response;
-    } catch (error: any) {
-      // If it's a rate limit error (429), schedule background retry instead of failing
-      const isRateLimit = error?.statusCode === 429 || 
-                         (error?.code === 'NETWORK_ERROR' && error?.statusCode === 429);
-      
-      if (isRateLimit) {
-        logger.warn('Registration rate limited, scheduling background retry', { 
-          nodeId: request.nodeId,
-          error: error.message 
-        });
-        
-        // Store request for retry
-        this.pendingRegisterRequest = request;
-        
-        // Schedule retry in background
-        this.scheduleRegisterRetry();
-        
-        // Don't throw - allow node to continue starting
-        // Return a promise that will resolve when registration succeeds
-        return new Promise((resolve, reject) => {
-          this.registerRetryResolve = resolve;
-          this.registerRetryReject = reject;
-        });
-      } else {
-        // For other errors, set error state and throw
-        this.setState({ status: 'error' });
-        this.emit('statusChange', 'error');
-        this.emit('error', error);
-        logger.error('Failed to register node', { error });
-        throw error;
-      }
+    } catch (error) {
+      this.setState({ status: 'error' });
+      this.emit('statusChange', 'error');
+      this.emit('error', error);
+      logger.error('Failed to register node', { error });
+      throw error;
     }
-  }
-
-  private pendingRegisterRequest: RegisterNodeRequest | null = null;
-  private registerRetryResolve: ((value: RegisterNodeResponse) => void) | null = null;
-  private registerRetryReject: ((reason?: any) => void) | null = null;
-  private registerRetryTimer: NodeJS.Timeout | null = null;
-
-  private scheduleRegisterRetry(): void {
-    if (this.registerRetryTimer) {
-      clearTimeout(this.registerRetryTimer);
-    }
-
-    if (!this.pendingRegisterRequest) {
-      return;
-    }
-
-    // Exponential backoff starting at 10 seconds
-    const delay = Math.min(60000, 10000 * Math.pow(2, this.reconnectAttempts));
-    this.reconnectAttempts++;
-
-    logger.info(`Scheduling registration retry in ${delay}ms`, { attempt: this.reconnectAttempts });
-
-    this.registerRetryTimer = setTimeout(async () => {
-      try {
-        const response = await this.apiClient.retryRequest(
-          () => this.apiClient.register(this.pendingRegisterRequest!)
-        );
-
-        this.setState({
-          status: 'connected',
-          nodeId: response.nodeId,
-          sessionToken: response.sessionToken,
-          relayServers: response.relayServers,
-          stunServers: response.stunServers,
-          nextHeartbeatInterval: config.heartbeat.interval,
-        });
-
-        this.apiClient.setSessionToken(response.sessionToken);
-        this.reconnectAttempts = 0;
-        this.pendingRegisterRequest = null;
-
-        this.emit('registered', response);
-        this.emit('statusChange', 'connected');
-
-        this.startHeartbeat();
-
-        logger.info('Node registered successfully after retry', { nodeId: response.nodeId });
-        
-        if (this.registerRetryResolve) {
-          this.registerRetryResolve(response);
-          this.registerRetryResolve = null;
-          this.registerRetryReject = null;
-        }
-      } catch (error: any) {
-        const isRateLimit = error?.statusCode === 429 || 
-                           (error?.code === 'NETWORK_ERROR' && error?.statusCode === 429);
-        
-        if (isRateLimit && this.reconnectAttempts < this.maxReconnectAttempts) {
-          // Still rate limited, retry again
-          this.scheduleRegisterRetry();
-        } else {
-          logger.error('Registration retry failed', { error, attempts: this.reconnectAttempts });
-          this.setState({ status: 'error' });
-          this.emit('statusChange', 'error');
-          
-          if (this.registerRetryReject) {
-            this.registerRetryReject(error);
-            this.registerRetryResolve = null;
-            this.registerRetryReject = null;
-          }
-        }
-      }
-    }, delay);
   }
 
   private setState(updates: Partial<ConnectionState>): void {
@@ -390,14 +292,7 @@ export class ConnectionManager extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.registerRetryTimer) {
-      clearTimeout(this.registerRetryTimer);
-      this.registerRetryTimer = null;
-    }
     this.reconnectAttempts = 0;
-    this.pendingRegisterRequest = null;
-    this.registerRetryResolve = null;
-    this.registerRetryReject = null;
   }
 
   updateHeartbeatMetrics(metrics: HeartbeatRequest['metrics']): void {
