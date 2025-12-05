@@ -1,5 +1,13 @@
-// Load environment variables first
-require('dotenv').config({ path: './bosonserver/.env' });
+// This script should be run from the Higgsvpn root directory
+// It will use the bosonserver's database connection
+const path = require('path');
+
+// Try to load .env from bosonserver directory
+try {
+  require('dotenv').config({ path: path.join(__dirname, 'bosonserver', '.env') });
+} catch (e) {
+  // dotenv might not be available, try to use environment variables directly
+}
 
 const { db } = require('./bosonserver/dist/database/postgres');
 
