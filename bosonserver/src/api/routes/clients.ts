@@ -75,23 +75,30 @@ router.get('/', async (req: Request, res: Response, next: any) => {
     const clientRouteMap = new Map(routes.map(r => [r.client_id, r]));
 
     // Build client info list
-    // Only include sessions that have active WebSocket connections
+    // Include sessions that have active WebSocket connections OR WireGuard registrations
     // Filter out stale sessions that don't have active connections
     const clients: ClientInfo[] = sessions
       .filter(session => {
-        // Only include sessions with active WebSocket connections
-        return activeWebSocketSessions.has(session.session_id);
+        // Include if has active WebSocket connection
+        if (activeWebSocketSessions.has(session.session_id)) {
+          return true;
+        }
+        // Or if registered as WireGuard client
+        if (wireGuardServer && wireGuardServer.getClientSession(session.client_id)) {
+          return true;
+        }
+        return false;
       })
       .map(session => {
         const route = routeMap.get(session.route_id || '') || clientRouteMap.get(session.client_id);
         
-        // Determine connection type
+        // Determine connection type and get WireGuard info if available
         let connectionType: 'WireGuard' | 'WebSocket' | 'Unknown' = 'Unknown';
+        const wgSession = wireGuardServer?.getClientSession(session.client_id);
+        
         if (activeWebSocketSessions.has(session.session_id)) {
           connectionType = 'WebSocket';
-        } else if (wireGuardServer) {
-          // Check if WireGuard client exists (you may need to implement a method to check this)
-          // For now, if not WebSocket, assume it could be WireGuard
+        } else if (wgSession) {
           connectionType = 'WireGuard';
         }
 
@@ -104,6 +111,12 @@ router.get('/', async (req: Request, res: Response, next: any) => {
           expiresAt: session.expires_at,
           connectionType,
         };
+        
+        // Add WireGuard client info if available
+        if (wgSession) {
+          clientInfo.clientAddress = wgSession.address;
+          clientInfo.clientPort = wgSession.port;
+        }
 
         if (route?.client_network_info) {
           try {

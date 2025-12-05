@@ -11,6 +11,7 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+      - SYS_ADMIN
     # Доступ к сетевому устройству TUN
     devices:
       - /dev/net/tun

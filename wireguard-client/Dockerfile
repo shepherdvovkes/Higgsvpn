@@ -1,5 +1,5 @@
-# Контейнер с Linux и WireGuard client
-FROM ubuntu:22.04
+# Контейнер с Debian Linux и WireGuard client
+FROM debian:bookworm-slim
 
 # Установка базовых зависимостей и WireGuard
 ENV DEBIAN_FRONTEND=noninteractive
@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     jq \
     uuid-runtime \
     openresolv \
+    ca-certificates \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание директории для конфигурации WireGuard
