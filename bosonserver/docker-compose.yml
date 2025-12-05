@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: bosonserver
     ports:
-      - "3001:3000"
+      - "3003:3000"
       - "3478:3478/udp"
       - "3478:3478/tcp"
       - "3479:3479/udp"
