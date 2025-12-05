@@ -31,7 +31,7 @@ export class RelayService {
       return;
     }
 
-    this.webSocketRelay = new WebSocketRelay(server, this.sessionManager, this.discoveryService);
+    this.webSocketRelay = new WebSocketRelay(server, this.sessionManager);
     this.startCleanupTask();
     logger.info('Relay service initialized');
   }
