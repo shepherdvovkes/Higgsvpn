@@ -1,6 +1,6 @@
 # WireGuard Client Container
 
-Контейнер с Linux (Ubuntu 22.04) и установленным WireGuard client.
+Контейнер с Debian Linux (Debian Bookworm) и установленным WireGuard client.
 
 ## Быстрый старт
 

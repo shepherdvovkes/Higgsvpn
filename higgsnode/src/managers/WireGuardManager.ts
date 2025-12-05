@@ -322,6 +322,7 @@ ListenPort = ${config.wireguard.port}
     try {
       const output = execSync(`"${this.paths.wg}" show "${this.interfaceName}"`, {
         encoding: 'utf-8',
+        stdio: 'pipe', // Suppress stderr output
       });
 
       const lines = output.trim().split('\n');
@@ -341,8 +342,15 @@ ListenPort = ${config.wireguard.port}
         address: config.wireguard.address,
         status: 'up',
       };
-    } catch (error) {
-      // Interface might not exist
+    } catch (error: any) {
+      // Interface might not exist - this is expected for HiggsNode architecture
+      // where packets come via API, not through a local WireGuard interface
+      if (error.message && error.message.includes('Unable to access interface')) {
+        // Suppress this specific error message as it's expected
+        logger.debug('WireGuard interface not accessible (expected for HiggsNode API architecture)', {
+          interfaceName: this.interfaceName,
+        });
+      }
       return {
         name: this.interfaceName,
         publicKey: this.getPublicKey() || '',

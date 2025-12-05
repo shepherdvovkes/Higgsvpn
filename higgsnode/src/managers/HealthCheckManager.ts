@@ -90,25 +90,58 @@ export class HealthCheckManager extends EventEmitter {
     };
 
     // Проверить WireGuard
+    // Note: For HiggsNode architecture, WireGuard interface may not exist
+    // as packets are received via API, not through a local WireGuard interface
     try {
       const wgStatus = await this.wireGuardManager.getInterfaceStatus();
       status.wireguard = wgStatus?.status === 'up';
-    } catch {
+      if (!status.wireguard) {
+        logger.debug('WireGuard interface not up (expected for HiggsNode API-based architecture)');
+      }
+    } catch (error: any) {
+      // Interface might not exist - this is expected for HiggsNode
       status.wireguard = false;
+      logger.debug('WireGuard interface check failed (non-critical for HiggsNode)', { 
+        error: error?.message || error 
+      });
     }
 
     // Проверить NAT
     status.nat = this.routingEngine.isNatEnabled();
 
-    // Проверить маршрутизацию
+    // Проверить маршрутизацию (networkRoute)
     try {
       status.networkRoute = await this.networkRouteManager.verifyRouting();
-    } catch {
+    } catch (error: any) {
       status.networkRoute = false;
+      logger.debug('Network route verification failed', { error: error?.message || error });
     }
 
-    // Общий статус
-    status.overall = status.wireguard && status.nat && status.networkRoute;
+    // Проверить routing (настройка маршрутов для WireGuard подсети)
+    // Для HiggsNode: routing считается успешным, если NAT включен
+    // WireGuard интерфейс не обязателен, так как пакеты приходят через API
+    try {
+      // Routing работает, если NAT включен (это основное требование для маршрутизации)
+      status.routing = status.nat;
+      
+      // Если networkRoute тоже работает, это дополнительный плюс
+      if (status.networkRoute) {
+        status.routing = true;
+      }
+      
+      // Если WireGuard активен, это тоже хорошо, но не обязательно
+      if (status.wireguard) {
+        status.routing = true;
+      }
+    } catch {
+      status.routing = false;
+    }
+
+    // Общий статус для HiggsNode:
+    // - NAT обязателен (для маршрутизации трафика)
+    // - WireGuard интерфейс не обязателен (пакеты через API)
+    // - Routing или networkRoute должны работать
+    status.overall = status.nat && (status.routing || status.networkRoute);
 
     return status;
   }

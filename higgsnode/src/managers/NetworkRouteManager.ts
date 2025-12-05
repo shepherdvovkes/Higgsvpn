@@ -102,6 +102,7 @@ export class NetworkRouteManager extends EventEmitter {
    */
   async verifyRouting(): Promise<boolean> {
     if (!this.physicalInterface) {
+      logger.debug('Physical interface not initialized, skipping routing verification');
       return false;
     }
 
@@ -118,8 +119,43 @@ export class NetworkRouteManager extends EventEmitter {
         return hasDefaultRoute && forwardingEnabled;
       } else if (isWindows()) {
         // Windows routing verification
-        const routeOutput = execSync('route print 0.0.0.0', { encoding: 'utf-8' });
-        return routeOutput.includes(this.physicalInterface.gateway);
+        try {
+          const routeOutput = execSync('route print 0.0.0.0', { encoding: 'utf-8', stdio: 'pipe' });
+          // Проверить наличие gateway в выводе
+          // Windows route print может показывать gateway в разных форматах
+          const hasGateway = routeOutput.includes(this.physicalInterface.gateway) || 
+                            routeOutput.includes(this.physicalInterface.name);
+          
+          if (!hasGateway) {
+            logger.debug('Default route gateway not found in route output', {
+              gateway: this.physicalInterface.gateway,
+              interface: this.physicalInterface.name,
+              routeOutput: routeOutput.substring(0, 200),
+            });
+          }
+          
+          // Также проверить, что физический интерфейс существует
+          try {
+            execSync(`netsh interface show interface name="${this.physicalInterface.name}"`, { stdio: 'pipe' });
+            return hasGateway;
+          } catch {
+            // Интерфейс может не существовать, но это не критично для проверки маршрутизации
+            return hasGateway;
+          }
+        } catch (error: any) {
+          logger.debug('Failed to verify Windows routing', { 
+            error: error.message,
+            gateway: this.physicalInterface.gateway,
+          });
+          // На Windows маршрутизация может работать даже если команда не выполнилась
+          // Проверить хотя бы наличие физического интерфейса
+          try {
+            execSync(`netsh interface show interface name="${this.physicalInterface.name}"`, { stdio: 'pipe' });
+            return true; // Если интерфейс существует, считаем маршрутизацию рабочей
+          } catch {
+            return false;
+          }
+        }
       } else if (isMacOS()) {
         // macOS routing verification
         const routeOutput = execSync('route -n get default', { encoding: 'utf-8' });

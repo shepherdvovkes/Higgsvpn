@@ -113,6 +113,41 @@ export class NodeRegistry {
     }
   }
 
+  async updateNodePublicIp(nodeId: string, publicIp: string): Promise<void> {
+    try {
+      // Get current node to update networkInfo
+      const node = await this.getNode(nodeId);
+      if (!node) {
+        logger.warn('Cannot update public IP: node not found', { nodeId });
+        return;
+      }
+
+      // Only update if IP has changed
+      if (node.networkInfo.publicIp === publicIp) {
+        return;
+      }
+
+      // Update networkInfo with new public IP
+      const updatedNetworkInfo = {
+        ...node.networkInfo,
+        publicIp,
+      };
+
+      await db.query(
+        `UPDATE nodes SET network_info = $1, updated_at = NOW() WHERE node_id = $2`,
+        [JSON.stringify(updatedNetworkInfo), nodeId]
+      );
+
+      // Invalidate cache
+      await redis.del(`node:${nodeId}`);
+
+      logger.debug('Node public IP updated', { nodeId, publicIp });
+    } catch (error) {
+      logger.error('Failed to update node public IP', { error, nodeId, publicIp });
+      // Don't throw - this is not critical
+    }
+  }
+
   async getAllActiveNodes(): Promise<Node[]> {
     try {
       const result = await db.query<Node>(

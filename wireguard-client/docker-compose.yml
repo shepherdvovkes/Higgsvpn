@@ -11,6 +11,7 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+      - SYS_ADMIN
     # Доступ к сетевому устройству TUN
     devices:
       - /dev/net/tun
@@ -23,6 +24,9 @@ services:
     # Переменные окружения
     environment:
       - TZ=Europe/Moscow
+      - BOSONSERVER_URL=${BOSONSERVER_URL:-http://mail.s0me.uk:3003}
+      - CLIENT_ID=${CLIENT_ID:-}
+      - WG_INTERFACE=${WG_INTERFACE:-wg0}
     # Логирование
     logging:
       driver: "json-file"

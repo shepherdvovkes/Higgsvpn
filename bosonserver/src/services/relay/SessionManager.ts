@@ -150,6 +150,65 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Clean up stale sessions that don't have active WebSocket connections
+   * @param activeWebSocketSessionIds Set of session IDs that have active WebSocket connections
+   * @param wireGuardClientIds Set of client IDs that have WireGuard registrations (should not be closed)
+   * @returns Number of sessions marked as closed
+   */
+  async cleanupStaleSessions(activeWebSocketSessionIds: Set<string>, wireGuardClientIds: Set<string> = new Set()): Promise<number> {
+    try {
+      // Get all active sessions from database with client_id
+      const activeSessions = await db.query<{ session_id: string; client_id: string }>(
+        `SELECT session_id, client_id FROM sessions 
+         WHERE status = 'active' AND expires_at > NOW()`
+      );
+
+      // Find sessions that don't have active WebSocket connections
+      // But exclude sessions for clients that have WireGuard registrations
+      const staleSessionIds: string[] = [];
+      for (const session of activeSessions) {
+        if (!activeWebSocketSessionIds.has(session.session_id)) {
+          // Don't close sessions for WireGuard clients
+          if (!wireGuardClientIds.has(session.client_id)) {
+            staleSessionIds.push(session.session_id);
+          }
+        }
+      }
+
+      if (staleSessionIds.length === 0) {
+        return 0;
+      }
+
+      // Mark stale sessions as closed
+      // Only mark sessions older than 2 minutes to avoid closing sessions that just connected
+      const result = await db.query<{ session_id: string }>(
+        `UPDATE sessions 
+         SET status = 'closed' 
+         WHERE session_id = ANY($1::text[]) 
+           AND status = 'active' 
+           AND created_at < NOW() - INTERVAL '2 minutes'
+         RETURNING session_id`,
+        [staleSessionIds]
+      );
+
+      const closedCount = result.length;
+      for (const row of result) {
+        this.activeSessions.delete(row.session_id);
+        await redis.del(`session:${row.session_id}`);
+      }
+
+      if (closedCount > 0) {
+        logger.info('Cleaned up stale sessions without active connections', { count: closedCount });
+      }
+
+      return closedCount;
+    } catch (error) {
+      logger.error('Failed to cleanup stale sessions', { error });
+      return 0;
+    }
+  }
+
   private mapRowToSession(row: any): RelaySession {
     return {
       sessionId: row.session_id,

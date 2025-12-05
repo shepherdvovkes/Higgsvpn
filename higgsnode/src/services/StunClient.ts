@@ -54,7 +54,9 @@ export class StunClient extends EventEmitter {
       const timeout = setTimeout(() => {
         socket.close();
         this.pendingRequests.delete(requestId);
-        reject(new Error('STUN request timeout'));
+        const timeoutError = new Error(`STUN request timeout after ${this.timeout}ms`);
+        (timeoutError as any).code = 'ETIMEDOUT';
+        reject(timeoutError);
       }, this.timeout);
 
       socket.on('message', (msg, rinfo) => {
@@ -76,11 +78,15 @@ export class StunClient extends EventEmitter {
         }
       });
 
-      socket.on('error', (error) => {
+      socket.on('error', (error: any) => {
         clearTimeout(timeout);
         socket.close();
         this.pendingRequests.delete(requestId);
-        reject(error);
+        // Enhance error with more context
+        const enhancedError = new Error(error?.message || 'STUN socket error');
+        (enhancedError as any).code = error?.code || 'ESOCKET';
+        (enhancedError as any).originalError = error;
+        reject(enhancedError);
       });
 
       const request = this.createBindingRequest(transactionId);
@@ -106,8 +112,14 @@ export class StunClient extends EventEmitter {
       // For now, return a default type
       // Full NAT type detection requires more complex logic with multiple tests
       return result.natType;
-    } catch (error) {
-      logger.error('NAT type detection failed', { error });
+    } catch (error: any) {
+      const errorMessage = error?.message || error?.code || String(error);
+      logger.warn('NAT type detection failed (non-critical, using default)', { 
+        error: errorMessage,
+        server: `${server.host}:${server.port}`,
+        code: error?.code,
+        hint: 'This is expected if STUN servers are unreachable or blocked by firewall'
+      });
       return 'Symmetric'; // Default to most restrictive
     }
   }

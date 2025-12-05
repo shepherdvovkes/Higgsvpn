@@ -335,13 +335,53 @@ export class NodeService {
       }
 
       // Построить URL для WebSocket подключения
-      const protocol = relayServer.protocol === 'websocket' ? 'wss' : 'ws';
-      const relayUrl = `${protocol}://${relayServer.host}:${relayServer.port}/relay/${this.nodeId}`;
+      // Если relay server указывает на localhost, использовать BOSON_SERVER_URL вместо этого
+      let relayHost = relayServer.host;
+      let relayPort = relayServer.port;
+      let useSecureProtocol = false;
+      
+      if (relayHost === 'localhost' || relayHost === '127.0.0.1') {
+        // Извлечь host и port из BOSON_SERVER_URL
+        try {
+          const bosonUrl = new URL(config.bosonServer.url);
+          relayHost = bosonUrl.hostname;
+          // Если порт не указан в relayServer, использовать порт из BOSON_SERVER_URL или 3000
+          if (!relayPort || relayPort === 3000) {
+            relayPort = bosonUrl.port ? parseInt(bosonUrl.port, 10) : (bosonUrl.protocol === 'https:' ? 443 : 80);
+          }
+          // Определить протокол на основе BOSON_SERVER_URL
+          useSecureProtocol = bosonUrl.protocol === 'https:';
+          logger.info('Using BOSON_SERVER_URL for relay connection', { relayHost, relayPort, useSecureProtocol });
+        } catch (error) {
+          logger.warn('Failed to parse BOSON_SERVER_URL, using relay server host', { error });
+        }
+      } else {
+        // Для не-localhost серверов, определить протокол на основе порта или использовать настройку из relayServer
+        // Если порт 443 или явно указан secure, использовать wss
+        useSecureProtocol = relayPort === 443 || relayServer.protocol === 'websocket';
+      }
+
+      // Попробовать использовать протокол на основе BOSON_SERVER_URL, если доступен
+      try {
+        const bosonUrl = new URL(config.bosonServer.url);
+        // Если relay host совпадает с boson host, использовать тот же протокол
+        if (relayHost === bosonUrl.hostname || relayHost.includes(bosonUrl.hostname) || bosonUrl.hostname.includes(relayHost)) {
+          useSecureProtocol = bosonUrl.protocol === 'https:';
+          logger.debug('Using BOSON_SERVER_URL protocol for relay', { protocol: bosonUrl.protocol, useSecureProtocol });
+        }
+      } catch {
+        // Игнорировать ошибки парсинга
+      }
+
+      const protocol = useSecureProtocol ? 'wss' : 'ws';
+      const relayUrl = `${protocol}://${relayHost}:${relayPort}/relay/${this.nodeId}`;
 
       logger.info('Connecting to WebSocket relay', {
         url: relayUrl,
         nodeId: this.nodeId,
         relayServer: relayServer.id,
+        originalHost: relayServer.host,
+        originalPort: relayServer.port,
       });
 
       // Создать WebSocket Relay соединение
