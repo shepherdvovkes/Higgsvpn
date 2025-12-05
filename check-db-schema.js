@@ -1,3 +1,6 @@
+// Load environment variables first
+require('dotenv').config({ path: './bosonserver/.env' });
+
 const { db } = require('./bosonserver/dist/database/postgres');
 
 async function checkSchema() {
