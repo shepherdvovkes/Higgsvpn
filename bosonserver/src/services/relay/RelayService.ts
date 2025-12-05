@@ -3,6 +3,7 @@ import { WebSocketRelay } from './WebSocketRelay';
 import { logger } from '../../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
 import { DiscoveryService } from '../discovery/DiscoveryService';
+import { WireGuardServer } from '../wireguard/WireGuardServer';
 
 export class RelayService {
   private sessionManager: SessionManager;
@@ -10,6 +11,7 @@ export class RelayService {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
   private discoveryService: DiscoveryService | null = null;
+  private wireGuardServer: WireGuardServer | null = null;
 
   constructor() {
     this.sessionManager = new SessionManager();
@@ -17,6 +19,10 @@ export class RelayService {
 
   setDiscoveryService(discoveryService: DiscoveryService): void {
     this.discoveryService = discoveryService;
+  }
+
+  setWireGuardServer(wireGuardServer: WireGuardServer): void {
+    this.wireGuardServer = wireGuardServer;
   }
 
   initializeWebSocket(server: any): void {
@@ -117,9 +123,11 @@ export class RelayService {
         await this.sessionManager.cleanupExpiredSessions();
         
         // Clean up stale sessions (sessions without active WebSocket connections)
+        // But exclude sessions that have WireGuard registrations
         if (this.webSocketRelay) {
           const activeWebSocketSessions = this.webSocketRelay.getActiveSessionIds();
-          await this.sessionManager.cleanupStaleSessions(activeWebSocketSessions);
+          const wireGuardClientIds = this.wireGuardServer?.getRegisteredClientIds() || new Set<string>();
+          await this.sessionManager.cleanupStaleSessions(activeWebSocketSessions, wireGuardClientIds);
         }
       } catch (error) {
         logger.error('Relay cleanup task failed', { error });

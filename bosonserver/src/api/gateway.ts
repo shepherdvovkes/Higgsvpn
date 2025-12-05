@@ -48,6 +48,7 @@ export class ApiGateway {
     this.metricsService = new MetricsService(this.discoveryService);
     this.turnManager = new TurnManager();
     this.wireGuardServer = new WireGuardServer(this.discoveryService);
+    this.relayService.setWireGuardServer(this.wireGuardServer); // Inject WireGuardServer into RelayService
 
     this.setupMiddleware();
     this.setupRoutes();

@@ -178,6 +178,24 @@ export class WireGuardServer extends EventEmitter {
     return null;
   }
 
+  /**
+   * Get all registered WireGuard client IDs
+   */
+  getRegisteredClientIds(): Set<string> {
+    const clientIds = new Set<string>();
+    for (const session of this.clientSessions.values()) {
+      clientIds.add(session.clientId);
+    }
+    return clientIds;
+  }
+
+  /**
+   * Check if a client ID has an active WireGuard registration
+   */
+  hasClientRegistration(clientId: string): boolean {
+    return this.getClientSession(clientId) !== null;
+  }
+
   async sendPacketToClientById(clientId: string, packet: Buffer): Promise<boolean> {
     const session = this.getClientSession(clientId);
     if (!session) {

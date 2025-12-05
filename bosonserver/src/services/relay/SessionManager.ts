@@ -153,21 +153,26 @@ export class SessionManager {
   /**
    * Clean up stale sessions that don't have active WebSocket connections
    * @param activeWebSocketSessionIds Set of session IDs that have active WebSocket connections
+   * @param wireGuardClientIds Set of client IDs that have WireGuard registrations (should not be closed)
    * @returns Number of sessions marked as closed
    */
-  async cleanupStaleSessions(activeWebSocketSessionIds: Set<string>): Promise<number> {
+  async cleanupStaleSessions(activeWebSocketSessionIds: Set<string>, wireGuardClientIds: Set<string> = new Set()): Promise<number> {
     try {
-      // Get all active sessions from database
-      const activeSessions = await db.query<{ session_id: string }>(
-        `SELECT session_id FROM sessions 
+      // Get all active sessions from database with client_id
+      const activeSessions = await db.query<{ session_id: string; client_id: string }>(
+        `SELECT session_id, client_id FROM sessions 
          WHERE status = 'active' AND expires_at > NOW()`
       );
 
       // Find sessions that don't have active WebSocket connections
+      // But exclude sessions for clients that have WireGuard registrations
       const staleSessionIds: string[] = [];
       for (const session of activeSessions) {
         if (!activeWebSocketSessionIds.has(session.session_id)) {
-          staleSessionIds.push(session.session_id);
+          // Don't close sessions for WireGuard clients
+          if (!wireGuardClientIds.has(session.client_id)) {
+            staleSessionIds.push(session.session_id);
+          }
         }
       }
 
