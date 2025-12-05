@@ -54,6 +54,15 @@ router.get('/', async (req: Request, res: Response, next: any) => {
        ORDER BY created_at DESC`
     );
 
+    // Debug: Log session count and WireGuard client IDs
+    const wireGuardClientIds = wireGuardServer?.getRegisteredClientIds() || new Set<string>();
+    logger.debug('Clients API', {
+      sessionCount: sessions.length,
+      wireGuardClientCount: wireGuardClientIds.size,
+      wireGuardClientIds: Array.from(wireGuardClientIds),
+      sessionClientIds: sessions.map(s => s.client_id),
+    });
+
     // Get routes to extract client network info (if columns exist)
     let routes: any[] = [];
     try {
