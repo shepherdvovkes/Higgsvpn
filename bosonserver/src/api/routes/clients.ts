@@ -39,7 +39,11 @@ router.get('/', async (req: Request, res: Response, next: any) => {
     // Get active WebSocket session IDs
     const activeWebSocketSessions = relayService.getActiveWebSocketSessionIds();
 
+    // Get WireGuard client IDs first to check for closed sessions that should be included
+    const wireGuardClientIds = wireGuardServer?.getRegisteredClientIds() || new Set<string>();
+    
     // Get active sessions from database
+    // Also include recently closed sessions (within last hour) if they have WireGuard registrations
     const sessions = await db.query<{
       session_id: string;
       node_id: string;
@@ -50,8 +54,15 @@ router.get('/', async (req: Request, res: Response, next: any) => {
       expires_at: Date;
     }>(
       `SELECT * FROM sessions 
-       WHERE status = 'active' AND expires_at > NOW()
-       ORDER BY created_at DESC`
+       WHERE expires_at > NOW()
+         AND (
+           status = 'active' 
+           OR (status = 'closed' 
+               AND created_at > NOW() - INTERVAL '1 hour'
+               AND client_id = ANY($1::text[]))
+         )
+       ORDER BY created_at DESC`,
+      [Array.from(wireGuardClientIds)]
     );
 
     // Debug: Log session count and WireGuard client IDs
