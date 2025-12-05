@@ -75,7 +75,45 @@ export class WireGuardServer extends EventEmitter {
     try {
       // Get or create session for this client
       const clientKey = `${rinfo.address}:${rinfo.port}`;
-      const session = this.clientSessions.get(clientKey);
+      let session = this.clientSessions.get(clientKey);
+
+      // If not found by IP:port (NAT case), try to find by clientId through relayService
+      if (!session && this.relayService) {
+        // Try to find client by matching against all active WebSocket sessions
+        // This handles NAT where the source IP changes
+        const activeSessions = this.relayService.getActiveWebSocketSessionIds();
+        for (const sessionId of activeSessions) {
+          try {
+            const wsSession = await this.relayService.getSession(sessionId);
+            if (wsSession && wsSession.clientId) {
+              // Check if this clientId is registered in our clientSessions
+              for (const [key, sess] of this.clientSessions.entries()) {
+                if (sess.clientId === wsSession.clientId && sess.nodeId === wsSession.nodeId) {
+                  // Found a match! Update the clientKey to the actual source IP (NAT public IP)
+                  // This allows future packets to be matched directly
+                  session = sess;
+                  // Update the session with new clientKey (actual source IP after NAT)
+                  this.clientSessions.set(clientKey, {
+                    ...session,
+                    lastSeen: Date.now(),
+                  });
+                  // Keep the old key too in case client switches back
+                  logger.info('Matched client by sessionId, updated clientKey for NAT', {
+                    clientId: session.clientId,
+                    oldKey: key,
+                    newKey: clientKey,
+                    nodeId: session.nodeId,
+                  });
+                  break;
+                }
+              }
+              if (session) break;
+            }
+          } catch (error) {
+            // Continue searching
+          }
+        }
+      }
 
       if (!session) {
         // New client - need to get node assignment from routing service
@@ -97,6 +135,7 @@ export class WireGuardServer extends EventEmitter {
 
       // Update last seen
       session.lastSeen = Date.now();
+      this.clientSessions.set(clientKey, session);
     } catch (error) {
       logger.error('Failed to handle WireGuard packet', { error });
     }
