@@ -9,13 +9,11 @@ import { apiRateLimiter, dashboardRateLimiter, nodeRateLimiter } from './middlew
 
 // Routes
 import nodesRouter from './routes/nodes';
-import clientsRouter from './routes/clients';
 import routingRouter from './routes/routing';
 import metricsRouter from './routes/metrics';
 import turnRouter from './routes/turn';
 import healthRouter from './routes/health';
 import packetsRouter from './routes/packets';
-import wireguardRouter from './routes/wireguard';
 
 // Services
 import { DiscoveryService } from '../services/discovery/DiscoveryService';
@@ -47,6 +45,7 @@ export class ApiGateway {
     this.metricsService = new MetricsService(this.discoveryService);
     this.turnManager = new TurnManager();
     this.wireGuardServer = new WireGuardServer(this.discoveryService);
+    this.wireGuardServer.setRelayService(this.relayService); // Inject RelayService into WireGuardServer
 
     this.setupMiddleware();
     this.setupRoutes();
@@ -97,19 +96,50 @@ export class ApiGateway {
   }
 
   private setupPacketForwarding(): void {
-    // Forward packets from WireGuardServer to nodes via API
-    this.wireGuardServer.on('packetToNode', async (data: { nodeId: string; clientId: string; packet: Buffer }) => {
+    // Forward packets from WireGuardServer to nodes via WebSocket relay or API
+    this.wireGuardServer.on('packetToNode', async (data: { nodeId: string; clientId: string; packet: Buffer; sessionId?: string }) => {
       try {
-        // Get node info
+        // Try WebSocket relay first if sessionId is available
+        if (data.sessionId) {
+          const sent = await this.relayService.sendToSession(data.sessionId, data.packet);
+          if (sent) {
+            logger.debug('Packet forwarded to node via WebSocket relay', { 
+              nodeId: data.nodeId, 
+              clientId: data.clientId,
+              sessionId: data.sessionId 
+            });
+            return;
+          }
+        }
+
+        // Try to find sessionId by clientId and nodeId
+        const activeSessions = this.relayService.getActiveWebSocketSessionIds();
+        for (const sessionId of activeSessions) {
+          const session = await this.relayService.getSession(sessionId);
+          if (session && session.clientId === data.clientId && session.nodeId === data.nodeId) {
+            const sent = await this.relayService.sendToSession(sessionId, data.packet);
+            if (sent) {
+              logger.debug('Packet forwarded to node via WebSocket relay (found session)', { 
+                nodeId: data.nodeId, 
+                clientId: data.clientId,
+                sessionId 
+              });
+              return;
+            }
+          }
+        }
+
+        // Fallback to direct API call
         const node = await this.discoveryService.getNode(data.nodeId);
         if (!node) {
           logger.warn('Node not found for packet forwarding', { nodeId: data.nodeId });
           return;
         }
 
-        // Send packet to node via API
-        // Node should have an endpoint to receive packets
-        const nodeApiUrl = process.env.NODE_API_BASE_URL || 'http://localhost:3000';
+        const nodeApiUrl = node.networkInfo?.ipv4 
+          ? `http://${node.networkInfo.ipv4}:${process.env.NODE_API_PORT || '3000'}`
+          : process.env.DEFAULT_NODE_API_URL || 'http://localhost:3000';
+
         try {
           await axios.post(
             `${nodeApiUrl}/api/v1/packets/from-server`,
@@ -126,12 +156,13 @@ export class ApiGateway {
               },
             }
           );
+          logger.debug('Packet forwarded to node via direct API', { nodeId: data.nodeId });
         } catch (apiError: any) {
-          logger.debug('Failed to send packet to node via API, using WebSocket relay', {
+          logger.warn('Failed to forward packet to node via both WebSocket relay and API', {
             error: apiError.message,
             nodeId: data.nodeId,
+            clientId: data.clientId,
           });
-          // Fallback to WebSocket relay if available
         }
       } catch (error) {
         logger.error('Failed to forward packet to node', { error, nodeId: data.nodeId });
@@ -146,7 +177,6 @@ export class ApiGateway {
     // API routes with rate limiting
     // Read-only dashboard endpoints get more lenient rate limiting
     this.app.use('/api/v1/nodes', dashboardRateLimiter, nodesRouter);
-    this.app.use('/api/v1/clients', dashboardRateLimiter, clientsRouter);
     
     // Metrics and heartbeat endpoints use nodeRateLimiter (more lenient for frequent updates)
     this.app.use('/api/v1/metrics', nodeRateLimiter, metricsRouter);
@@ -155,8 +185,6 @@ export class ApiGateway {
     this.app.use('/api/v1/routing', nodeRateLimiter, routingRouter);
     this.app.use('/api/v1/turn', turnRouter);
     this.app.use('/api/v1/packets', packetsRouter);
-    // WireGuard endpoint for registering WireGuard clients
-    this.app.use('/api/v1/wireguard', nodeRateLimiter, wireguardRouter);
 
     // Prometheus metrics endpoint
     this.app.get('/metrics', async (req: Request, res: Response, next: NextFunction) => {

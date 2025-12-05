@@ -17,7 +17,8 @@ export class WireGuardServer extends EventEmitter {
   private server: dgram.Socket | null = null;
   private discoveryService: DiscoveryService;
   private apiClient: AxiosInstance;
-  private clientSessions = new Map<string, { nodeId: string; clientId: string; lastSeen: number }>();
+  private relayService?: any; // RelayService, injected via setter
+  private clientSessions = new Map<string, { nodeId: string; clientId: string; sessionId?: string; lastSeen: number }>();
   private readonly WIREGUARD_PORT = parseInt(process.env.WIREGUARD_PORT || '51820', 10);
   private readonly SESSION_TIMEOUT = 300000; // 5 minutes
 
@@ -91,8 +92,8 @@ export class WireGuardServer extends EventEmitter {
         return;
       }
 
-      // Send packet to node via API
-      await this.sendPacketToNode(session.nodeId, session.clientId, data);
+      // Send packet to node via API or WebSocket relay
+      await this.sendPacketToNode(session.nodeId, session.clientId, data, session.sessionId);
 
       // Update last seen
       session.lastSeen = Date.now();
@@ -101,9 +102,34 @@ export class WireGuardServer extends EventEmitter {
     }
   }
 
-  private async sendPacketToNode(nodeId: string, clientId: string, packet: Buffer): Promise<void> {
+  private async sendPacketToNode(nodeId: string, clientId: string, packet: Buffer, sessionId?: string): Promise<void> {
     try {
-      // Get node info to find its API endpoint
+      // Try WebSocket relay first if sessionId is available
+      if (sessionId && this.relayService) {
+        const sent = await this.relayService.sendToSession(sessionId, packet);
+        if (sent) {
+          logger.debug('Packet sent to node via WebSocket relay', { nodeId, clientId, sessionId });
+          return;
+        }
+      }
+
+      // Try to find sessionId by clientId if not provided
+      if (!sessionId && this.relayService) {
+        // Find session by clientId
+        const activeSessions = this.relayService.getActiveWebSocketSessionIds();
+        for (const sid of activeSessions) {
+          const session = await this.relayService.getSession(sid);
+          if (session && session.clientId === clientId && session.nodeId === nodeId) {
+            const sent = await this.relayService.sendToSession(sid, packet);
+            if (sent) {
+              logger.debug('Packet sent to node via WebSocket relay (found session)', { nodeId, clientId, sessionId: sid });
+              return;
+            }
+          }
+        }
+      }
+
+      // Fallback to direct API call
       const node = await this.discoveryService.getNode(nodeId);
       if (!node) {
         logger.warn('Node not found', { nodeId });
@@ -132,16 +158,15 @@ export class WireGuardServer extends EventEmitter {
             },
           }
         );
+        logger.debug('Packet sent to node via direct API', { nodeId, clientId });
       } catch (apiError: any) {
-        // If direct API call fails, use relay through BOSONSERVER
-        logger.debug('Direct node API call failed, using relay', { error: apiError.message });
-        
-        // Use WebSocket relay or HTTP relay through BOSONSERVER
-        // This will be handled by RelayService
+        // If direct API call fails, emit event for ApiGateway to handle
+        logger.debug('Direct node API call failed, emitting packetToNode event', { error: apiError.message });
         this.emit('packetToNode', {
           nodeId,
           clientId,
           packet,
+          sessionId,
         });
       }
     } catch (error) {
@@ -149,19 +174,25 @@ export class WireGuardServer extends EventEmitter {
     }
   }
 
+  setRelayService(relayService: any): void {
+    this.relayService = relayService;
+  }
+
   async registerClientSession(
     clientId: string,
     nodeId: string,
     clientAddress: string,
-    clientPort: number
+    clientPort: number,
+    sessionId?: string
   ): Promise<void> {
     const clientKey = `${clientAddress}:${clientPort}`;
     this.clientSessions.set(clientKey, {
       nodeId,
       clientId,
+      sessionId,
       lastSeen: Date.now(),
     });
-    logger.info('WireGuard client session registered', { clientId, nodeId, clientKey });
+    logger.info('WireGuard client session registered', { clientId, nodeId, clientKey, sessionId });
   }
 
   getClientSession(clientId: string): { nodeId: string; clientId: string; address: string; port: number } | null {

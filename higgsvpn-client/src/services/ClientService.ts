@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { ApiClient, RouteRequest, RouteResponse } from './ApiClient';
 import { WebSocketRelay } from './WebSocketRelay';
 import { WireGuardManager } from './WireGuardManager';
+import { TrafficForwarder } from './TrafficForwarder';
 import { ClientError, ConnectionError, RouteError } from '../utils/errors';
 import { getLocalIPv4 } from '../utils/network';
 
@@ -20,6 +21,7 @@ export class ClientService extends EventEmitter {
   private apiClient: ApiClient;
   private relay: WebSocketRelay | null = null;
   private wireGuardManager: WireGuardManager;
+  private trafficForwarder: TrafficForwarder | null = null;
   private clientId: string;
   private status: ClientStatus = { connected: false };
   private isConnecting = false;
@@ -84,6 +86,27 @@ export class ClientService extends EventEmitter {
         try {
           await this.setupWireGuard(routeResponse.selectedRoute.wireguardConfig);
           logger.info('WireGuard interface setup completed');
+          
+          // Зарегистрировать клиента в WireGuardServer
+          try {
+            const clientAddress = getLocalIPv4();
+            const clientPort = config.wireguard.port;
+            if (clientAddress) {
+              await this.apiClient.registerWireGuardClient(
+                this.clientId,
+                routeResponse.selectedRoute.nodeEndpoint.nodeId,
+                clientAddress,
+                clientPort,
+                routeResponse.selectedRoute.sessionToken
+              );
+              logger.info('WireGuard client registered with server');
+            } else {
+              logger.warn('Cannot register WireGuard client: local IP not found');
+            }
+          } catch (regError) {
+            logger.warn('Failed to register WireGuard client, continuing', { error: regError });
+            // Продолжаем, так как WebSocket relay все равно работает
+          }
         } catch (error) {
           logger.error('Failed to setup WireGuard interface', { error });
           // Продолжаем без WireGuard, используем только WebSocket
@@ -112,7 +135,19 @@ export class ClientService extends EventEmitter {
         }
       }
 
-      // 6. Update status
+      // 6. Start traffic forwarder (для перехвата и пересылки трафика)
+      if (this.relay) {
+        this.trafficForwarder = new TrafficForwarder(this.relay);
+        try {
+          await this.trafficForwarder.start();
+          logger.info('Traffic forwarder started');
+        } catch (error) {
+          logger.warn('Failed to start traffic forwarder', { error });
+          // Продолжаем без traffic forwarder
+        }
+      }
+
+      // 7. Update status
       this.status.connected = true;
       this.isConnecting = false;
       this.emit('connected', this.status);
@@ -217,6 +252,16 @@ export class ClientService extends EventEmitter {
     }
 
     logger.info('Disconnecting client');
+
+    // Остановить traffic forwarder
+    if (this.trafficForwarder) {
+      try {
+        await this.trafficForwarder.stop();
+      } catch (error) {
+        logger.warn('Failed to stop traffic forwarder', { error });
+      }
+      this.trafficForwarder = null;
+    }
 
     // Удалить WireGuard интерфейс
     try {

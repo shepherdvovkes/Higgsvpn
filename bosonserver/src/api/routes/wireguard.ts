@@ -36,7 +36,8 @@ router.post('/register', async (req: Request, res: Response, next: any) => {
       validatedData.clientId,
       validatedData.nodeId,
       validatedData.clientAddress,
-      validatedData.clientPort
+      validatedData.clientPort,
+      validatedData.sessionId
     );
 
     // Если есть sessionId, обновляем сессию с информацией о WireGuard адресе

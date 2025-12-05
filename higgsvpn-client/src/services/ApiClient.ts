@@ -124,5 +124,28 @@ export class ApiClient {
       return false;
     }
   }
+
+  async registerWireGuardClient(
+    clientId: string,
+    nodeId: string,
+    clientAddress: string,
+    clientPort: number,
+    sessionId?: string
+  ): Promise<void> {
+    try {
+      logger.info('Registering WireGuard client', { clientId, nodeId, clientAddress, clientPort });
+      const response = await this.axiosInstance.post('/api/v1/wireguard/register', {
+        clientId,
+        nodeId,
+        sessionId,
+        clientAddress,
+        clientPort,
+      });
+      logger.info('WireGuard client registered', { response: response.data });
+    } catch (error: any) {
+      logger.error('Failed to register WireGuard client', { error });
+      throw new RouteError(`Failed to register WireGuard client: ${error.message}`);
+    }
+  }
 }
 
