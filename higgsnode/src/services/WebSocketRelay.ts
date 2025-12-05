@@ -328,6 +328,10 @@ export class WebSocketRelay extends EventEmitter {
         logger.info('Control: connect', { sessionId: message.sessionId });
         this.emit('controlConnect', message.payload);
         break;
+      case 'connected':
+        logger.debug('Control: connected (connection confirmed by server)', { sessionId: message.sessionId });
+        this.emit('controlConnected', message.payload);
+        break;
       case 'disconnect':
         logger.info('Control: disconnect', { sessionId: message.sessionId });
         this.emit('controlDisconnect', message.payload);
