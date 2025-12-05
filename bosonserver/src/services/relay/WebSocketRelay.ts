@@ -1,5 +1,5 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import { SessionManager, RelaySession } from './SessionManager';
+import { SessionManager } from './SessionManager';
 import { logger } from '../../utils/logger';
 import { IncomingMessage } from 'http';
 import { EventEmitter } from 'events';
@@ -7,6 +7,8 @@ import { DiscoveryService } from '../discovery/DiscoveryService';
 import { getRealIp } from '../../utils/ipUtils';
 import { db } from '../../database/postgres';
 import { Node } from '../../database/models';
+import { gunzip } from 'zlib';
+import { promisify } from 'util';
 
 export interface RelayMessage {
   type: 'data' | 'control' | 'heartbeat';
@@ -279,8 +281,6 @@ export class WebSocketRelay extends EventEmitter {
 
   private async handleCompressedControl(sessionId: string, message: any, ws: WebSocket): Promise<void> {
     try {
-      const { gunzip } = require('zlib');
-      const { promisify } = require('util');
       const gunzipAsync = promisify(gunzip);
 
       const compressed = Buffer.from(message.data, 'base64');
@@ -292,7 +292,7 @@ export class WebSocketRelay extends EventEmitter {
     }
   }
 
-  private handleDataMessage(sessionId: string, message: RelayMessage, ws: WebSocket): void {
+  private handleDataMessage(sessionId: string, message: RelayMessage, _ws: WebSocket): void {
     try {
       // Get session to determine direction
       this.sessionManager.getSession(sessionId).then((session) => {
@@ -331,9 +331,17 @@ export class WebSocketRelay extends EventEmitter {
 
   private async forwardPacketToNode(nodeId: string, sessionId: string, packet: Buffer): Promise<void> {
     try {
-      // Get node info to find its API endpoint
-      // This should be available through DiscoveryService
-      // For now, emit event that will be handled by WireGuardServer or RelayService
+      // Try to find node's WebSocket connection first
+      if (this.nodeConnections.has(nodeId)) {
+        const nodeWs = this.nodeConnections.get(nodeId);
+        if (nodeWs && nodeWs.readyState === WebSocket.OPEN) {
+          nodeWs.send(packet);
+          logger.debug('Packet forwarded to node via WebSocket', { nodeId, sessionId });
+          return;
+        }
+      }
+
+      // If no direct WebSocket connection, emit event for gateway to handle
       this.emit('packetToNode', {
         nodeId,
         sessionId,
@@ -366,7 +374,7 @@ export class WebSocketRelay extends EventEmitter {
     }
   }
 
-  private handleControlMessage(sessionId: string, message: RelayMessage, ws: WebSocket): void {
+  private handleControlMessage(sessionId: string, message: RelayMessage, _ws: WebSocket): void {
     const { action } = message.payload as any;
 
     switch (action) {

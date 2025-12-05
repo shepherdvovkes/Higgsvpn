@@ -236,8 +236,26 @@ export class ClientService extends EventEmitter {
       this.emit('disconnected');
     });
 
-    this.relay.on('packet', (data: any) => {
-      this.emit('packet', data);
+    this.relay.on('packet', async (data: any) => {
+      // Handle incoming packets from relay
+      // Convert to Buffer if needed
+      const packet = Buffer.isBuffer(data) ? data : Buffer.from(data, typeof data === 'string' ? 'base64' : undefined);
+      
+      // Inject packet into WireGuard interface using wg set
+      // WireGuard will handle the packet and deliver it to the application
+      try {
+        // Use wg set to inject packet (this is a workaround - normally WireGuard handles this via UDP)
+        // For now, we'll just emit the packet event and let WireGuard handle it via its normal UDP path
+        // The real solution would be to use a TUN library to inject packets directly
+        logger.debug('Received packet from relay', { size: packet.length });
+        this.emit('packet', packet);
+        
+        // Note: WireGuard handles incoming packets via UDP, so packets from WebSocket
+        // need to be sent via UDP to the WireGuard interface's endpoint
+        // This is a limitation - we'd need to modify WireGuard or use a different approach
+      } catch (error) {
+        logger.error('Failed to handle incoming packet', { error });
+      }
     });
 
     this.relay.on('error', (error: Error) => {

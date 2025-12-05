@@ -55,10 +55,32 @@ export class WebSocketRelay extends EventEmitter {
 
         this.ws.on('message', (data: WebSocket.Data) => {
           try {
-            const message = JSON.parse(data.toString()) as RelayMessage;
-            this.handleMessage(message);
+            // Check if data is binary (WireGuard packet) or text (JSON message)
+            if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+              // Binary WireGuard packet - emit directly
+              const packet = Buffer.isBuffer(data) ? data : Buffer.from(data);
+              // Check if it's a WireGuard packet (first byte 0x01-0x04)
+              const firstByte = packet[0];
+              if (firstByte >= 0x01 && firstByte <= 0x04) {
+                logger.debug('Received WireGuard packet via WebSocket', { size: packet.length });
+                this.emit('packet', packet);
+              } else {
+                // Try to parse as JSON
+                try {
+                  const message = JSON.parse(packet.toString()) as RelayMessage;
+                  this.handleMessage(message);
+                } catch {
+                  // If not JSON, emit as packet anyway
+                  this.emit('packet', packet);
+                }
+              }
+            } else {
+              // Text message - parse as JSON
+              const message = JSON.parse(data.toString()) as RelayMessage;
+              this.handleMessage(message);
+            }
           } catch (error) {
-            logger.error('Failed to parse WebSocket message', { error });
+            logger.error('Failed to handle WebSocket message', { error });
           }
         });
 

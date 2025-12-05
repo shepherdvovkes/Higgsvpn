@@ -52,7 +52,7 @@ export class ApiGateway {
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
-    this.setupPacketForwarding();
+    // Note: setupPacketForwarding will be called after WebSocket relay is initialized in start()
   }
 
   private setupMiddleware(): void {
@@ -98,6 +98,62 @@ export class ApiGateway {
   }
 
   private setupPacketForwarding(): void {
+    // Forward packets from WebSocketRelay to nodes via WebSocket relay or API
+    const webSocketRelay = (this.relayService as any).webSocketRelay;
+    if (webSocketRelay) {
+      webSocketRelay.on('packetToNode', async (data: { nodeId: string; sessionId: string; packet: Buffer }) => {
+        try {
+          // Try WebSocket relay first if sessionId is available
+          if (data.sessionId) {
+            const sent = await this.relayService.sendToSession(data.sessionId, data.packet);
+            if (sent) {
+              logger.debug('Packet forwarded to node via WebSocket relay (from WebSocketRelay)', { 
+                nodeId: data.nodeId, 
+                sessionId: data.sessionId 
+              });
+              return;
+            }
+          }
+
+          // Fallback to direct API call
+          const node = await this.discoveryService.getNode(data.nodeId);
+          if (!node) {
+            logger.warn('Node not found for packet forwarding', { nodeId: data.nodeId });
+            return;
+          }
+
+          const nodeApiUrl = node.networkInfo?.ipv4 
+            ? `http://${node.networkInfo.ipv4}:${process.env.NODE_API_PORT || '3000'}`
+            : process.env.DEFAULT_NODE_API_URL || 'http://localhost:3000';
+
+          try {
+            await axios.post(
+              `${nodeApiUrl}/api/v1/packets/from-server`,
+              {
+                nodeId: data.nodeId,
+                packet: data.packet.toString('base64'),
+                timestamp: Date.now(),
+              },
+              {
+                timeout: 5000,
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+            logger.debug('Packet forwarded to node via direct API (from WebSocketRelay)', { nodeId: data.nodeId });
+          } catch (apiError: any) {
+            logger.warn('Failed to forward packet to node via both WebSocket relay and API', {
+              error: apiError.message,
+              nodeId: data.nodeId,
+            });
+          }
+        } catch (error) {
+          logger.error('Failed to forward packet to node', { error, nodeId: data.nodeId });
+        }
+      });
+    }
+
     // Forward packets from WireGuardServer to nodes via WebSocket relay or API
     this.wireGuardServer.on('packetToNode', async (data: { nodeId: string; clientId: string; packet: Buffer; sessionId?: string }) => {
       try {
@@ -219,6 +275,9 @@ export class ApiGateway {
 
       // Initialize WebSocket relay
       this.relayService.initializeWebSocket(this.server);
+      
+      // Setup packet forwarding after WebSocket relay is initialized
+      this.setupPacketForwarding();
 
       // Start WireGuard UDP server
       await this.wireGuardServer.start();
