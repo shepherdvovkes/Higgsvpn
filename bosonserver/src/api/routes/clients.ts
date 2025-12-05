@@ -66,7 +66,6 @@ router.get('/', async (req: Request, res: Response, next: any) => {
     );
 
     // Debug: Log session count and WireGuard client IDs
-    const wireGuardClientIds = wireGuardServer?.getRegisteredClientIds() || new Set<string>();
     logger.debug('Clients API', {
       sessionCount: sessions.length,
       wireGuardClientCount: wireGuardClientIds.size,
