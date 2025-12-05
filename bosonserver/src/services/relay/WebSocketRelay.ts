@@ -2,6 +2,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { SessionManager, RelaySession } from './SessionManager';
 import { logger } from '../../utils/logger';
 import { IncomingMessage } from 'http';
+import { EventEmitter } from 'events';
+import { DiscoveryService } from '../discovery/DiscoveryService';
 
 export interface RelayMessage {
   type: 'data' | 'control' | 'heartbeat';
@@ -10,15 +12,19 @@ export interface RelayMessage {
   payload: Buffer | any;
 }
 
-export class WebSocketRelay {
+export class WebSocketRelay extends EventEmitter {
   private wss: WebSocketServer;
   private sessionManager: SessionManager;
+  private discoveryService: DiscoveryService | null;
   private connections = new Map<string, WebSocket>();
+  private nodeConnections = new Map<string, WebSocket>(); // Track node connections separately
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private heartbeatIntervals = new Map<string, NodeJS.Timeout>();
 
-  constructor(server: any, sessionManager: SessionManager) {
+  constructor(server: any, sessionManager: SessionManager, discoveryService: DiscoveryService | null = null) {
+    super();
     this.sessionManager = sessionManager;
+    this.discoveryService = discoveryService;
     // Don't use path filter - handle all WebSocket connections and filter in handleConnection
     this.wss = new WebSocketServer({ 
       server,
@@ -48,16 +54,66 @@ export class WebSocketRelay {
         return;
       }
 
-      // Verify session
-      const session = await this.sessionManager.getSession(sessionId);
-      if (!session || session.status !== 'active') {
-        logger.warn('Connection rejected: invalid session', { sessionId });
-        ws.close(1008, 'Invalid session');
-        return;
+      // Helper to extract real IP from WebSocket request
+      const getRealIpFromRequest = (req: IncomingMessage): string => {
+        // Check for X-Forwarded-For header
+        const forwardedFor = req.headers['x-forwarded-for'];
+        if (forwardedFor) {
+          const ips = typeof forwardedFor === 'string' ? forwardedFor.split(',') : forwardedFor;
+          const realIp = ips[0].trim();
+          if (realIp) {
+            return realIp;
+          }
+        }
+        
+        // Check for X-Real-IP header
+        const realIp = req.headers['x-real-ip'];
+        if (realIp && typeof realIp === 'string') {
+          return realIp;
+        }
+        
+        // Fallback to socket remote address
+        return req.socket.remoteAddress || 'unknown';
+      };
+
+      // Check if this is a node connection (sessionId is a nodeId)
+      let isNodeConnection = false;
+      if (this.discoveryService) {
+        try {
+          const node = await this.discoveryService.getNode(sessionId);
+          if (node && node.status === 'online') {
+            isNodeConnection = true;
+            
+            // Extract and update real IP from WebSocket connection
+            const realIp = getRealIpFromRequest(req);
+            if (realIp && realIp !== 'unknown') {
+              await this.discoveryService.updateNodePublicIp(sessionId, realIp);
+              logger.debug('Updated node public IP from WebSocket connection', { nodeId: sessionId, publicIp: realIp });
+            }
+            
+            logger.info('Node WebSocket connection detected', { nodeId: sessionId, publicIp: realIp });
+          }
+        } catch (error) {
+          logger.debug('Failed to check if sessionId is a nodeId', { error, sessionId });
+        }
       }
 
-      // Store connection
-      this.connections.set(sessionId, ws);
+      // If not a node connection, verify it's a valid session
+      if (!isNodeConnection) {
+        const session = await this.sessionManager.getSession(sessionId);
+        if (!session || session.status !== 'active') {
+          logger.warn('Connection rejected: invalid session', { sessionId });
+          ws.close(1008, 'Invalid session');
+          return;
+        }
+        // Store client session connection
+        this.connections.set(sessionId, ws);
+      } else {
+        // Store node connection separately
+        this.nodeConnections.set(sessionId, ws);
+        // Also store in main connections map for compatibility
+        this.connections.set(sessionId, ws);
+      }
 
       // Setup heartbeat
       this.setupHeartbeat(sessionId, ws);
@@ -323,10 +379,19 @@ export class WebSocketRelay {
       this.heartbeatIntervals.delete(sessionId);
     }
 
-    this.connections.delete(sessionId);
-    await this.sessionManager.closeSession(sessionId);
+    // Check if this is a node connection
+    const isNodeConnection = this.nodeConnections.has(sessionId);
+    
+    if (isNodeConnection) {
+      this.nodeConnections.delete(sessionId);
+      logger.info('Node WebSocket connection closed', { nodeId: sessionId });
+    } else {
+      // Only close session for client connections, not node connections
+      await this.sessionManager.closeSession(sessionId);
+      logger.info('WebSocket connection closed', { sessionId });
+    }
 
-    logger.info('WebSocket connection closed', { sessionId });
+    this.connections.delete(sessionId);
   }
 
   async sendToSession(sessionId: string, data: Buffer | string): Promise<boolean> {

@@ -62,8 +62,13 @@ export class NatTraversalEngine extends EventEmitter {
       const natType = await this.stunClient.detectNatType(server);
       logger.info('NAT type detected', { natType });
       return natType;
-    } catch (error) {
-      logger.error('NAT type detection failed', { error });
+    } catch (error: any) {
+      const errorMessage = error?.message || error?.code || String(error);
+      logger.warn('NAT type detection failed (non-critical, using default)', { 
+        error: errorMessage,
+        code: error?.code,
+        hint: 'Defaulting to Symmetric NAT type. This is expected if STUN servers are unreachable.'
+      });
       return 'Symmetric'; // Default to most restrictive
     }
   }
@@ -85,8 +90,14 @@ export class NatTraversalEngine extends EventEmitter {
         address: result.mappedAddress,
         port: result.mappedPort,
       };
-    } catch (error) {
-      logger.error('Mapped address discovery failed', { error });
+    } catch (error: any) {
+      const errorMessage = error?.message || error?.code || String(error);
+      logger.warn('Mapped address discovery failed (non-critical)', { 
+        error: errorMessage,
+        code: error?.code,
+        server: `${this.stunServers[0]?.host}:${this.stunServers[0]?.port}`,
+        hint: 'This is expected if STUN servers are unreachable, blocked by firewall, or behind a restrictive NAT'
+      });
       return null;
     }
   }

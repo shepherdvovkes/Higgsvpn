@@ -2,15 +2,21 @@ import { SessionManager } from './SessionManager';
 import { WebSocketRelay } from './WebSocketRelay';
 import { logger } from '../../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
+import { DiscoveryService } from '../discovery/DiscoveryService';
 
 export class RelayService {
   private sessionManager: SessionManager;
   private webSocketRelay: WebSocketRelay | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  private discoveryService: DiscoveryService | null = null;
 
   constructor() {
     this.sessionManager = new SessionManager();
+  }
+
+  setDiscoveryService(discoveryService: DiscoveryService): void {
+    this.discoveryService = discoveryService;
   }
 
   initializeWebSocket(server: any): void {
@@ -19,7 +25,7 @@ export class RelayService {
       return;
     }
 
-    this.webSocketRelay = new WebSocketRelay(server, this.sessionManager);
+    this.webSocketRelay = new WebSocketRelay(server, this.sessionManager, this.discoveryService);
     this.startCleanupTask();
     logger.info('Relay service initialized');
   }
@@ -107,7 +113,14 @@ export class RelayService {
 
     this.cleanupInterval = setInterval(async () => {
       try {
+        // Clean up expired sessions
         await this.sessionManager.cleanupExpiredSessions();
+        
+        // Clean up stale sessions (sessions without active WebSocket connections)
+        if (this.webSocketRelay) {
+          const activeWebSocketSessions = this.webSocketRelay.getActiveSessionIds();
+          await this.sessionManager.cleanupStaleSessions(activeWebSocketSessions);
+        }
       } catch (error) {
         logger.error('Relay cleanup task failed', { error });
       }

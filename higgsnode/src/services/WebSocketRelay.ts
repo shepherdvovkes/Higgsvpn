@@ -55,9 +55,39 @@ export class WebSocketRelay extends EventEmitter {
       try {
         logger.info('Connecting to WebSocket relay', { url: this.options.url, sessionId: this.options.sessionId });
 
-        this.ws = new WebSocket(this.options.url);
+        // Для wss соединений, отключить проверку сертификата в development (можно настроить через env)
+        const wsOptions: any = {};
+        if (this.options.url.startsWith('wss://')) {
+          // В production следует использовать валидные сертификаты
+          // Здесь можно добавить опцию для отключения проверки сертификата только для development
+          if (process.env.NODE_ENV === 'development' || process.env.WS_REJECT_UNAUTHORIZED === 'false') {
+            wsOptions.rejectUnauthorized = false;
+          }
+        }
+
+        this.ws = new WebSocket(this.options.url, wsOptions);
+
+        let connectionTimeout: NodeJS.Timeout | null = null;
+        const CONNECTION_TIMEOUT = 10000; // 10 seconds
+
+        // Установить таймаут подключения
+        connectionTimeout = setTimeout(() => {
+          if (!this.isConnected && this.ws) {
+            logger.error('WebSocket connection timeout', { url: this.options.url });
+            this.ws.close();
+            // Если включен reconnect, не reject - позволить close handler обработать переподключение
+            if (!this.options.reconnect || this.reconnectAttempts >= this.options.maxReconnectAttempts) {
+              reject(new Error('WebSocket connection timeout'));
+            }
+            // Если reconnect включен, close handler вызовет scheduleReconnect
+          }
+        }, CONNECTION_TIMEOUT);
 
         this.ws.on('open', () => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
+            connectionTimeout = null;
+          }
           logger.info('WebSocket relay connected', { sessionId: this.options.sessionId });
           this.isConnected = true;
           this.reconnectAttempts = 0;
@@ -70,15 +100,85 @@ export class WebSocketRelay extends EventEmitter {
           this.handleMessage(data);
         });
 
-        this.ws.on('error', (error) => {
-          logger.error('WebSocket relay error', { error, sessionId: this.options.sessionId });
+        this.ws.on('error', (error: any) => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
+            connectionTimeout = null;
+          }
+          
+          // Логировать более детальную информацию об ошибке
+          const errorInfo: any = {
+            error: error.message || error.code || error,
+            code: error.code,
+            sessionId: this.options.sessionId,
+            url: this.options.url,
+          };
+          
+          if (error.code === 'ECONNREFUSED') {
+            errorInfo.message = 'Connection refused - server may not be running or URL is incorrect';
+          } else if (error.code === 'ENOTFOUND') {
+            errorInfo.message = 'Host not found - check DNS or URL';
+          } else if (error.code === 'ECONNRESET') {
+            errorInfo.message = 'Connection reset by server';
+          } else if (error.code === 'EPROTO') {
+            // EPROTO обычно означает несоответствие протокола (пытаемся WSS, но сервер отдает WS)
+            errorInfo.message = 'Protocol mismatch - server may not support secure WebSocket (WSS). Try using plain WebSocket (WS) instead.';
+            errorInfo.hint = 'If server uses HTTP (not HTTPS), use ws:// instead of wss://';
+          }
+          
+          logger.error('WebSocket relay error', errorInfo);
           this.emit('error', error);
+          
+          // Для EPROTO ошибки, попробовать переключиться на plain WS
+          if (error.code === 'EPROTO' && this.options.url.startsWith('wss://') && !this.isConnected) {
+            const fallbackUrl = this.options.url.replace('wss://', 'ws://');
+            logger.warn('Attempting fallback to plain WebSocket (WS) due to EPROTO error', { 
+              originalUrl: this.options.url,
+              fallbackUrl 
+            });
+            
+            // Обновить URL и попробовать снова
+            this.options.url = fallbackUrl;
+            // Закрыть текущее соединение
+            if (this.ws) {
+              this.ws.removeAllListeners();
+              this.ws.close();
+              this.ws = null;
+            }
+            // Попробовать подключиться снова с plain WS
+            setTimeout(() => {
+              this.connect().catch((retryError) => {
+                logger.error('Fallback WebSocket connection also failed', { error: retryError });
+                if (this.options.reconnect && this.reconnectAttempts < this.options.maxReconnectAttempts) {
+                  this.scheduleReconnect();
+                } else {
+                  reject(retryError);
+                }
+              });
+            }, 1000);
+            return; // Не reject здесь, так как мы пытаемся fallback
+          }
+          
+          // Не reject если уже подключены (ошибка может быть временной)
+          // И не reject если включен reconnect (будет переподключение)
           if (!this.isConnected) {
-            reject(error);
+            if (this.options.reconnect && this.reconnectAttempts < this.options.maxReconnectAttempts) {
+              // Не reject, позволить scheduleReconnect обработать это
+              // scheduleReconnect будет вызван автоматически при close событии
+              // Здесь просто не reject, чтобы не прерывать процесс
+            } else {
+              // Если reconnect отключен или достигнут лимит попыток, reject
+              reject(error);
+            }
           }
         });
 
         this.ws.on('close', (code, reason) => {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
+            connectionTimeout = null;
+          }
+          
           logger.warn('WebSocket relay closed', {
             code,
             reason: reason.toString(),

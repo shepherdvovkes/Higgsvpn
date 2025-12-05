@@ -42,6 +42,7 @@ export class ApiGateway {
     // Initialize services
     this.discoveryService = new DiscoveryService();
     this.relayService = new RelayService();
+    this.relayService.setDiscoveryService(this.discoveryService); // Inject DiscoveryService into RelayService
     this.routingService = new RoutingService(this.discoveryService);
     this.routingService.setRelayService(this.relayService); // Inject RelayService into RoutingService
     this.metricsService = new MetricsService(this.discoveryService);
@@ -55,6 +56,10 @@ export class ApiGateway {
   }
 
   private setupMiddleware(): void {
+    // Trust proxy to get real IP from X-Forwarded-For headers
+    // This is important when behind a reverse proxy (nginx, load balancer, etc.)
+    this.app.set('trust proxy', true);
+    
     // CORS
     this.app.use(cors({
       origin: config.cors.origin === '*' ? true : config.cors.origin,

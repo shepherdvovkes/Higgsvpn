@@ -452,9 +452,15 @@
                         </td>
                         <td>
                             <div class="info-item">
-                                <div class="info-label">IPv4:</div>
+                                <div class="info-label">Local IPv4:</div>
                                 <div class="info-value">${networkInfo.ipv4 || '--'}</div>
                             </div>
+                            ${networkInfo.publicIp ? `
+                            <div class="info-item">
+                                <div class="info-label">Public IP:</div>
+                                <div class="info-value" style="color: #4caf50; font-weight: 500;">${networkInfo.publicIp}</div>
+                            </div>
+                            ` : ''}
                             <div class="info-item">
                                 <div class="info-label">NAT Type:</div>
                                 <div class="info-value">${networkInfo.natType || networkInfo.nat_type || '--'}</div>

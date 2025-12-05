@@ -102,6 +102,10 @@ export class DiscoveryService {
     return this.heartbeatManager.processHeartbeat(nodeId, data);
   }
 
+  async updateNodePublicIp(nodeId: string, publicIp: string): Promise<void> {
+    return this.nodeRegistry.updateNodePublicIp(nodeId, publicIp);
+  }
+
   async getNode(nodeId: string): Promise<Node | null> {
     return this.nodeRegistry.getNode(nodeId);
   }
@@ -143,11 +147,28 @@ export class DiscoveryService {
     host: string;
     port: number;
   }> {
-    // In production, this would be configurable
+    // Use public STUN servers by default, or configured ones
+    const stunHost = process.env.STUN_HOST;
+    const stunPort = parseInt(process.env.STUN_PORT || '3478', 10);
+    
+    if (stunHost && stunHost !== 'localhost' && stunHost !== '0.0.0.0') {
+      return [
+        {
+          host: stunHost,
+          port: stunPort,
+        },
+      ];
+    }
+    
+    // Default to public STUN servers
     return [
       {
-        host: process.env.STUN_HOST || 'localhost',
-        port: parseInt(process.env.STUN_PORT || '3478', 10),
+        host: 'stun.l.google.com',
+        port: 19302,
+      },
+      {
+        host: 'stun1.l.google.com',
+        port: 19302,
       },
     ];
   }

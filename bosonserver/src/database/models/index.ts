@@ -7,6 +7,7 @@ export interface Node {
     natType: 'FullCone' | 'RestrictedCone' | 'PortRestricted' | 'Symmetric';
     stunMappedAddress: string | null;
     localPort: number;
+    publicIp?: string; // Real/public IP from where node connects
   };
   capabilities: {
     maxConnections: number;

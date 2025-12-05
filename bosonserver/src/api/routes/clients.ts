@@ -75,51 +75,58 @@ router.get('/', async (req: Request, res: Response, next: any) => {
     const clientRouteMap = new Map(routes.map(r => [r.client_id, r]));
 
     // Build client info list
-    const clients: ClientInfo[] = sessions.map(session => {
-      const route = routeMap.get(session.route_id || '') || clientRouteMap.get(session.client_id);
-      
-      // Determine connection type
-      let connectionType: 'WireGuard' | 'WebSocket' | 'Unknown' = 'Unknown';
-      if (activeWebSocketSessions.has(session.session_id)) {
-        connectionType = 'WebSocket';
-      } else if (wireGuardServer) {
-        // Check if WireGuard client exists (you may need to implement a method to check this)
-        // For now, if not WebSocket, assume it could be WireGuard
-        connectionType = 'WireGuard';
-      }
-
-      const clientInfo: ClientInfo = {
-        clientId: session.client_id,
-        nodeId: session.node_id,
-        routeId: session.route_id,
-        status: session.status,
-        createdAt: session.created_at,
-        expiresAt: session.expires_at,
-        connectionType,
-      };
-
-      if (route?.client_network_info) {
-        try {
-          clientInfo.networkInfo = typeof route.client_network_info === 'string' 
-            ? JSON.parse(route.client_network_info) 
-            : route.client_network_info;
-        } catch (e) {
-          // Ignore parse errors
+    // Only include sessions that have active WebSocket connections
+    // Filter out stale sessions that don't have active connections
+    const clients: ClientInfo[] = sessions
+      .filter(session => {
+        // Only include sessions with active WebSocket connections
+        return activeWebSocketSessions.has(session.session_id);
+      })
+      .map(session => {
+        const route = routeMap.get(session.route_id || '') || clientRouteMap.get(session.client_id);
+        
+        // Determine connection type
+        let connectionType: 'WireGuard' | 'WebSocket' | 'Unknown' = 'Unknown';
+        if (activeWebSocketSessions.has(session.session_id)) {
+          connectionType = 'WebSocket';
+        } else if (wireGuardServer) {
+          // Check if WireGuard client exists (you may need to implement a method to check this)
+          // For now, if not WebSocket, assume it could be WireGuard
+          connectionType = 'WireGuard';
         }
-      }
 
-      if (route?.requirements) {
-        try {
-          clientInfo.requirements = typeof route.requirements === 'string'
-            ? JSON.parse(route.requirements)
-            : route.requirements;
-        } catch (e) {
-          // Ignore parse errors
+        const clientInfo: ClientInfo = {
+          clientId: session.client_id,
+          nodeId: session.node_id,
+          routeId: session.route_id,
+          status: session.status,
+          createdAt: session.created_at,
+          expiresAt: session.expires_at,
+          connectionType,
+        };
+
+        if (route?.client_network_info) {
+          try {
+            clientInfo.networkInfo = typeof route.client_network_info === 'string' 
+              ? JSON.parse(route.client_network_info) 
+              : route.client_network_info;
+          } catch (e) {
+            // Ignore parse errors
+          }
         }
-      }
 
-      return clientInfo;
-    });
+        if (route?.requirements) {
+          try {
+            clientInfo.requirements = typeof route.requirements === 'string'
+              ? JSON.parse(route.requirements)
+              : route.requirements;
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+
+        return clientInfo;
+      });
 
     res.json({ clients, count: clients.length });
   } catch (error) {
