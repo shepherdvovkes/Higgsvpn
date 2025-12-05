@@ -4,6 +4,7 @@ import { DiscoveryService } from '../../services/discovery/DiscoveryService';
 import { logger } from '../../utils/logger';
 import { ValidationError, NotFoundError, UnauthorizedError } from '../../utils/errors';
 import { nodeRateLimiter } from '../middleware/rateLimit';
+import { getRealIp } from '../../utils/ipUtils';
 
 const router = Router();
 
@@ -76,28 +77,7 @@ function authenticateNode(req: Request, res: Response, next: any): void {
   }
 }
 
-// Helper function to extract real IP from request
-function getRealIp(req: Request): string {
-  // Check for X-Forwarded-For header (when behind proxy/load balancer)
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (forwardedFor) {
-    // X-Forwarded-For can contain multiple IPs, take the first one (original client)
-    const ips = typeof forwardedFor === 'string' ? forwardedFor.split(',') : forwardedFor;
-    const realIp = ips[0].trim();
-    if (realIp) {
-      return realIp;
-    }
-  }
-  
-  // Check for X-Real-IP header
-  const realIp = req.headers['x-real-ip'];
-  if (realIp && typeof realIp === 'string') {
-    return realIp;
-  }
-  
-  // Fallback to req.ip (set by Express trust proxy)
-  return req.ip || req.socket.remoteAddress || 'unknown';
-}
+// Note: getRealIp is now imported from utils/ipUtils
 
 // POST /api/v1/nodes/register
 // Используем nodeRateLimiter - регистрация может происходить при перезапуске ноды
@@ -107,12 +87,13 @@ router.post('/register', nodeRateLimiter, async (req: Request, res: Response, ne
     
     const validatedData = registerNodeSchema.parse(req.body);
     
-    // Extract real IP from request
-    const realIp = getRealIp(req);
+    // Extract real IP from request (async to resolve server IP if needed)
+    const realIp = await getRealIp(req);
     
     // Add real IP to networkInfo
     if (realIp && realIp !== 'unknown') {
       validatedData.networkInfo.publicIp = realIp;
+      logger.debug('Node registration with public IP', { nodeId: validatedData.nodeId, publicIp: realIp });
     }
     
     const response = await discoveryService.registerNode(validatedData);
@@ -136,10 +117,11 @@ router.post('/:nodeId/heartbeat', nodeRateLimiter, authenticateNode, async (req:
     
     const validatedData = heartbeatSchema.parse(req.body);
     
-    // Extract real IP from request and update if it has changed
-    const realIp = getRealIp(req);
+    // Extract real IP from request and update if it has changed (async to resolve server IP if needed)
+    const realIp = await getRealIp(req);
     if (realIp && realIp !== 'unknown') {
       await discoveryService.updateNodePublicIp(nodeId, realIp);
+      logger.debug('Node heartbeat with public IP', { nodeId, publicIp: realIp });
     }
     
     const response = await discoveryService.processHeartbeat(nodeId, validatedData);

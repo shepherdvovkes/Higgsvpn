@@ -1,8 +1,12 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import { EventEmitter } from 'events';
 import { SessionManager, RelaySession } from './SessionManager';
 import { logger } from '../../utils/logger';
 import { IncomingMessage } from 'http';
+import { EventEmitter } from 'events';
+import { DiscoveryService } from '../discovery/DiscoveryService';
+import { getRealIp } from '../../utils/ipUtils';
+import { db } from '../../database/postgres';
+import { Node } from '../../database/models';
 
 export interface RelayMessage {
   type: 'data' | 'control' | 'heartbeat';
@@ -14,13 +18,16 @@ export interface RelayMessage {
 export class WebSocketRelay extends EventEmitter {
   private wss: WebSocketServer;
   private sessionManager: SessionManager;
+  private discoveryService: DiscoveryService | null;
   private connections = new Map<string, WebSocket>();
+  private nodeConnections = new Map<string, WebSocket>(); // Track node connections separately
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private heartbeatIntervals = new Map<string, NodeJS.Timeout>();
 
-  constructor(server: any, sessionManager: SessionManager) {
+  constructor(server: any, sessionManager: SessionManager, discoveryService: DiscoveryService | null = null) {
     super();
     this.sessionManager = sessionManager;
+    this.discoveryService = discoveryService;
     // Don't use path filter - handle all WebSocket connections and filter in handleConnection
     this.wss = new WebSocketServer({ 
       server,
@@ -50,16 +57,101 @@ export class WebSocketRelay extends EventEmitter {
         return;
       }
 
-      // Verify session
-      const session = await this.sessionManager.getSession(sessionId);
-      if (!session || session.status !== 'active') {
-        logger.warn('Connection rejected: invalid session', { sessionId });
-        ws.close(1008, 'Invalid session');
-        return;
+      // Check if this is a node connection (sessionId is a nodeId)
+      // Node IDs are UUIDs, so if sessionId looks like a UUID, check if it's a node first
+      let isNodeConnection = false;
+      const isUuidFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId);
+      
+      if (isUuidFormat) {
+        let node: Node | null = null;
+        
+        // Try to get node from discovery service first
+        if (this.discoveryService) {
+          try {
+            node = await this.discoveryService.getNode(sessionId);
+          } catch (error) {
+            logger.warn('Failed to get node from discovery service, trying database fallback', { error, sessionId });
+          }
+        }
+        
+        // If not found via discovery service, try direct database query as fallback
+        if (!node) {
+          try {
+            const result = await db.query<any>(
+              'SELECT * FROM nodes WHERE node_id = $1',
+              [sessionId]
+            );
+            
+            if (result.length > 0) {
+              const row = result[0];
+              node = {
+                nodeId: row.node_id,
+                publicKey: row.public_key,
+                networkInfo: row.network_info,
+                capabilities: row.capabilities,
+                location: row.location,
+                status: row.status,
+                lastHeartbeat: new Date(row.last_heartbeat),
+                registeredAt: new Date(row.registered_at),
+                sessionToken: row.session_token || undefined,
+                expiresAt: row.expires_at ? new Date(row.expires_at) : undefined,
+              };
+              logger.debug('Node found via database fallback', { nodeId: sessionId });
+            }
+          } catch (error) {
+            logger.warn('Failed to query database for node', { error, sessionId });
+          }
+        }
+        
+        if (node) {
+          // Node found - check if it's online or allow connection if status is valid
+          logger.info('Node found for WebSocket connection', { nodeId: sessionId, status: node.status });
+          if (node.status === 'online' || node.status === 'degraded') {
+            isNodeConnection = true;
+            
+            // Extract and update real IP from WebSocket connection (async to resolve server IP if needed)
+            const realIp = await getRealIp(req);
+            if (realIp && realIp !== 'unknown' && this.discoveryService) {
+              try {
+                await this.discoveryService.updateNodePublicIp(sessionId, realIp);
+                logger.debug('Updated node public IP from WebSocket connection', { nodeId: sessionId, publicIp: realIp });
+              } catch (error) {
+                logger.debug('Failed to update node public IP', { error, nodeId: sessionId });
+              }
+            }
+            
+            logger.info('Node WebSocket connection detected', { nodeId: sessionId, publicIp: realIp || 'unknown', status: node.status });
+          } else {
+            logger.warn('Node connection rejected: node not online', { nodeId: sessionId, status: node.status });
+            ws.close(1008, 'Node not online');
+            return;
+          }
+        } else {
+          // Node not found - log for debugging
+          logger.warn('SessionId is UUID format but node not found in discovery service or database', { 
+            sessionId, 
+            hasDiscoveryService: !!this.discoveryService,
+            willCheckAsSession: true 
+          });
+        }
       }
 
-      // Store connection
-      this.connections.set(sessionId, ws);
+      // If not a node connection, verify it's a valid session
+      if (!isNodeConnection) {
+        const session = await this.sessionManager.getSession(sessionId);
+        if (!session || session.status !== 'active') {
+          logger.warn('Connection rejected: invalid session', { sessionId, isUuidFormat });
+          ws.close(1008, 'Invalid session');
+          return;
+        }
+        // Store client session connection
+        this.connections.set(sessionId, ws);
+      } else {
+        // Store node connection separately
+        this.nodeConnections.set(sessionId, ws);
+        // Also store in main connections map for compatibility
+        this.connections.set(sessionId, ws);
+      }
 
       // Setup heartbeat
       this.setupHeartbeat(sessionId, ws);
@@ -325,10 +417,19 @@ export class WebSocketRelay extends EventEmitter {
       this.heartbeatIntervals.delete(sessionId);
     }
 
-    this.connections.delete(sessionId);
-    await this.sessionManager.closeSession(sessionId);
+    // Check if this is a node connection
+    const isNodeConnection = this.nodeConnections.has(sessionId);
+    
+    if (isNodeConnection) {
+      this.nodeConnections.delete(sessionId);
+      logger.info('Node WebSocket connection closed', { nodeId: sessionId });
+    } else {
+      // Only close session for client connections, not node connections
+      await this.sessionManager.closeSession(sessionId);
+      logger.info('WebSocket connection closed', { sessionId });
+    }
 
-    logger.info('WebSocket connection closed', { sessionId });
+    this.connections.delete(sessionId);
   }
 
   async sendToSession(sessionId: string, data: Buffer | string): Promise<boolean> {
@@ -377,4 +478,3 @@ export class WebSocketRelay extends EventEmitter {
     logger.info('WebSocket relay server closed');
   }
 }
-
